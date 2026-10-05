@@ -1,0 +1,20 @@
+{
+  "name": "expense-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "migrate:local": "wrangler d1 migrations apply expense-tracker-db --local",
+    "migrate:remote": "wrangler d1 migrations apply expense-tracker-db --remote"
+  },
+  "dependencies": {
+    "@hono/swagger-ui": "^0.6.1",
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260927.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.147.0"
+  }
+}
