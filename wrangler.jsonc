@@ -8,6 +8,12 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
+  "routes": [
+    {
+      "pattern": "expense-tracker.ashishjha.dev",
+      "custom_domain": true
+    }
+  ],
   "observability": {
     "logs": {
       "enabled": true,

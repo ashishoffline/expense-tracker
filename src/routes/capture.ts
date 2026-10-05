@@ -19,6 +19,11 @@ captureRoute.post("/", async (c) => {
   const expectedToken = c.env.INGESTION_TOKEN;
 
   if (!authHeader || authHeader !== `Bearer ${expectedToken}`) {
+    console.warn("[CAPTURE:AUTH_FAIL]", JSON.stringify({
+      ip: c.req.header("CF-Connecting-IP") || "unknown",
+      userAgent: c.req.header("User-Agent") || "unknown",
+      hasHeader: Boolean(authHeader),
+    }));
     return c.json({ success: false, error: "Unauthorized" }, 401);
   }
 
@@ -40,7 +45,7 @@ captureRoute.post("/", async (c) => {
     return c.json({ success: false, error: "Field 'message' is required" }, 400);
   }
 
-  // 3. Strong OTP Filtering
+  // 3. Deterministic OTP Filtering (Silently ignored, zero log noise)
   if (isOtpMessage(message)) {
     return c.json({
       action: "ignored",
@@ -57,24 +62,22 @@ captureRoute.post("/", async (c) => {
 
   // 5. Parse Bank SMS via Sender-Keyed Template Registry
   const parsed = parseBankSms(message, sender.trim());
-
-  // 6. Account Linking via last4 digits
-  let accountId: string | null = null;
-  if (parsed.last4) {
-    const acc = await c.env.DB.prepare(
-      `SELECT id FROM accounts WHERE card_last4 = ? OR account_last4 = ? LIMIT 1`
-    ).bind(parsed.last4, parsed.last4).first<{ id: string }>();
-
-    if (acc) {
-      accountId = acc.id;
-    }
-  }
-
   const status = parsed.amount !== null ? "PARSED" : "UNPARSED";
   const txnDate = parsed.transactionDate || normalizedReceivedAt;
 
-  // 7. Database Insertion with Conflict Handling
+  // 6. Database Operations with Failure Replay Logging
   try {
+    let accountId: string | null = null;
+    if (parsed.last4) {
+      const acc = await c.env.DB.prepare(
+        `SELECT id FROM accounts WHERE card_last4 = ? OR account_last4 = ? LIMIT 1`
+      ).bind(parsed.last4, parsed.last4).first<{ id: string }>();
+
+      if (acc) {
+        accountId = acc.id;
+      }
+    }
+
     const insertResult = await c.env.DB.prepare(
       `INSERT INTO transactions (
         id, source_user, sender, raw_message, transaction_date,
@@ -125,10 +128,20 @@ captureRoute.post("/", async (c) => {
       );
     }
   } catch (error) {
+    // Only non-OTP database failures are logged with full payload for manual replay
+    console.error(
+      "[CAPTURE:DB_FAILURE_REPLAY]",
+      JSON.stringify({
+        id,
+        error: error instanceof Error ? error.message : String(error),
+        payload: { sender, message, source, receivedAt },
+      })
+    );
+
     return c.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Database insertion failed",
+        error: error instanceof Error ? error.message : "Database operation failed",
       },
       500
     );
