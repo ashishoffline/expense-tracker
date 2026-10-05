@@ -1,0 +1,382 @@
+export interface ParsedTransaction {
+  amount: number | null;
+  type: "DEBIT" | "CREDIT";
+  merchant: string | null;
+  last4: string | null;
+  method: "CARD" | "UPI" | "NETBANKING" | null;
+  category: string;
+  transactionDate: string | null;
+  templateName?: string;
+}
+
+interface TemplateDefinition {
+  name: string;
+  type: "DEBIT" | "CREDIT";
+  method: "CARD" | "UPI" | "NETBANKING";
+  // Regex with named capture groups: amount, last4, merchant, date
+  regex: RegExp;
+}
+
+interface BankTemplateGroup {
+  bank: string;
+  senderMatch: RegExp;
+  templates: TemplateDefinition[];
+}
+
+// ============================================================================
+// 1. SENDER-KEYED TEMPLATE REGISTRY
+// ============================================================================
+const BANK_REGISTRY: BankTemplateGroup[] = [
+  // KOTAK BANK
+  {
+    bank: "KOTAK",
+    senderMatch: /KOTAK/i,
+    templates: [
+      {
+        name: "Kotak Debit Card Spend",
+        type: "DEBIT",
+        method: "CARD",
+        regex: /^Rs\.(?<amount>[\d,.]+)\s+spent\s+via\s+Kotak\s+Debit\s+Card\s+[xX*]+(?<last4>\d{4})\s+at\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}\/\d{2}\/\d{4})/i,
+      },
+    ],
+  },
+
+  // HDFC BANK
+  {
+    bank: "HDFC",
+    senderMatch: /HDFC/i,
+    templates: [
+      // Template A: HDFC UPI Sent (Multi-line)
+      {
+        name: "HDFC UPI Sent",
+        type: "DEBIT",
+        method: "UPI",
+        regex: /^Sent\s+Rs\.(?<amount>[\d,.]+)\s*\n+From\s+HDFC\s+Bank\s+A\/C\s+\*(?<last4>\d{4})\s*\n+To\s+(?<merchant>[^\r\n]+)\s*\n+On\s+(?<date>\d{2}\/\d{2}\/\d{2})/im,
+      },
+      // Template B: HDFC Credit Card Spend
+      {
+        name: "HDFC Card Spend",
+        type: "DEBIT",
+        method: "CARD",
+        regex: /^Spent\s+Rs\.?\s*(?<amount>[\d,.]+)\s+on\s+HDFC\s+Bank\s+Card\s+(?<last4>\d{4})\s+at\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2})/i,
+      },
+      // Template C: HDFC Refund
+      {
+        name: "HDFC Refund",
+        type: "CREDIT",
+        method: "CARD",
+        regex: /^Refund\s+of\s+Rs\.?\s*(?<amount>[\d,.]+)\s+credited\s+to\s+your\s+HDFC\s+Bank\s+Card\s+(?<last4>\d{4})\s+from\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2})/i,
+      },
+    ],
+  },
+
+  // ICICI BANK
+  {
+    bank: "ICICI",
+    senderMatch: /ICICI/i,
+    templates: [
+      {
+        name: "ICICI Card Spend on date on merchant",
+        type: "DEBIT",
+        method: "CARD",
+        regex: /^INR\s+(?<amount>[\d,.]+)\s+spent\s+using\s+ICICI\s+Bank\s+Card\s+[xX*]+(?<last4>\d{4})\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2})\s+on\s+(?<merchant>[^.]+?)\.\s+Avl\s+Limit/i,
+      },
+    ],
+  },
+
+  // SBI CARD & BANK
+  {
+    bank: "SBI",
+    senderMatch: /SBI/i,
+    templates: [
+      {
+        name: "SBI Credit Card Spend",
+        type: "DEBIT",
+        method: "CARD",
+        regex: /^Rs\.(?<amount>[\d,.]+)\s+spent\s+on\s+your\s+SBI\s+Credit\s+Card\s+ending\s+(?<last4>\d{4})\s+at\s+(?<merchant>[^.]+?)\s+on\s+(?<date>\d{2}\/\d{2}\/\d{2})/i,
+      },
+    ],
+  },
+
+  // BANK OF BARODA / SCAPIA
+  {
+    bank: "BOB",
+    senderMatch: /BOB|SCAPIA/i,
+    templates: [
+      {
+        name: "BOBCARD Scapia Txn Successful",
+        type: "DEBIT",
+        method: "CARD",
+        regex: /^Your\s+txn\s+of\s+INR(?<amount>[\d,.]+)\s+AT\s+(?<merchant>.+?)\s+WAS\s+SUCCESSFUL\s+ON\s+YOUR\s+BOBCARD\s+SCAPIA.*?ending\s+with\s+(?<last4>\d{4})/i,
+      },
+    ],
+  },
+
+  // AXIS BANK
+  {
+    bank: "AXIS",
+    senderMatch: /AXIS/i,
+    templates: [
+      {
+        name: "Axis Bank Card Multi-line Spend",
+        type: "DEBIT",
+        method: "CARD",
+        regex: /^Spent\s+INR\s+(?<amount>[\d,.]+)\s*\n+Axis\s+Bank\s+Card\s+no\.\s+[xX*]+(?<last4>\d{4})\s*\n+(?<date>\d{2}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}:\d{2}(?:\s+IST)?)?)\s*\n+(?<merchant>[^\r\n]+)\s*\n+Avl\s+Limit/im,
+      },
+    ],
+  },
+
+  // HSBC
+  {
+    bank: "HSBC",
+    senderMatch: /HSBC/i,
+    templates: [
+      {
+        name: "HSBC Credit Card Used At",
+        type: "DEBIT",
+        method: "CARD",
+        regex: /^HSBC\s+Credit\s+Card\s+[xX*]+(?<last4>\d{4})\s+used\s+at\s+(?<merchant>.+?)\s+for\s+INR\s+(?<amount>[\d,.]+)\s+on\s+(?<date>\d{2}\/\d{2}\/\d{2})/i,
+      },
+    ],
+  },
+];
+
+// ============================================================================
+// 2. CATEGORY DICTIONARY & CANONICAL MERCHANTS
+// ============================================================================
+const CATEGORY_MAP: Record<string, string[]> = {
+  dining: [
+    "swiggy", "zomato", "eats", "restaurant", "cafe", "burger", "starbucks",
+    "chai", "mcdonald", "dominos", "pizza", "kfc", "biryani", "subway",
+    "haldiram", "crush corner", "food", "kitchen", "bakery", "sweets", "dhaba"
+  ],
+  groceries: [
+    "blinkit", "zepto", "instamart", "bigbasket", "dmart", "natures basket",
+    "supermarket", "grocery", "milk", "country delight", "bazaar", "fresh", "provisions"
+  ],
+  fuel: [
+    "petrol", "fuel", "hpcl", "bpcl", "iocl", "shell", "cng", "auto lpg", "pump"
+  ],
+  travel: [
+    "uber", "ola", "rapido", "irctc", "indigo", "air india", "makemytrip",
+    "cleartrip", "fastag", "metro", "goibibo", "flight", "toll", "railways", "transit"
+  ],
+  shopping: [
+    "amazon", "amazonpay", "flipkart", "myntra", "ajio", "zara", "h&m", "croma", "reliance",
+    "tata cliq", "nykaa", "uniqlo", "retail", "decathlon", "lifestyle", "shoppers stop"
+  ],
+  utilities: [
+    "bescom", "airtel", "jio", "vi", "vodafone", "electricity", "billdesk",
+    "tatapower", "gas", "water", "broadband", "act fibernet", "recharge"
+  ],
+  entertainment: [
+    "netflix", "spotify", "pvr", "inox", "bookmyshow", "hotstar", "prime video",
+    "cinema", "youtube", "movie"
+  ],
+  healthcare: [
+    "apollo", "pharmacy", "1mg", "practo", "medplus", "hospital", "dental",
+    "doctor", "lab", "pharmeasy", "clinic", "medical"
+  ],
+  personal_care: [
+    "urban company", "salon", "enrich", "haircut", "spa"
+  ],
+  investments: [
+    "zerodha", "groww", "coin", "indmoney", "mutual fund", "sip", "uti"
+  ],
+  cc_bill: [
+    "cred", "cheq", "credit card bill", "cc payment", "bill payment"
+  ],
+  rent: [
+    "rent", "nobroker", "housing"
+  ],
+  education: [
+    "school", "college", "fees", "udemy", "coursera"
+  ]
+};
+
+const CANONICAL_MERCHANTS: Record<string, string> = {
+  "FLIPKART INTERNET PRIVATE": "Flipkart",
+  "FLIPKART": "Flipkart",
+  "AMAZONPAYINDIAPRIVATET": "Amazon Pay",
+  "AMAZON PAY IN G": "Amazon Pay",
+  "AMAZON PAY": "Amazon Pay",
+  "AMAZON": "Amazon",
+  "UBER INDIA SYSTEMS": "Uber",
+  "UBER": "Uber",
+  "ZOMATO": "Zomato",
+  "SWIGGY": "Swiggy",
+  "IRCTC": "IRCTC",
+  "CRUSH CORNER": "Crush Corner",
+  "BLINKIT": "Blinkit",
+  "ZEPTO": "Zepto",
+};
+
+function cleanMerchantName(raw: string): string {
+  let name = raw.trim();
+
+  // Strip leading UPI prefix (e.g. "UPI-AMBUJ KUMAR" -> "AMBUJ KUMAR")
+  if (/^UPI[-_\s]+/i.test(name)) {
+    name = name.replace(/^UPI[-_\s]+/i, "").trim();
+  }
+
+  // Handle slash formats like "UPI/SWIGGY/12345"
+  if (name.includes("/")) {
+    const parts = name.split("/").map((p) => p.trim()).filter(Boolean);
+    const candidate = parts.find((p) => p.toUpperCase() !== "UPI" && isNaN(Number(p)));
+    if (candidate) name = candidate;
+  }
+
+  // Handle UPI VPA handles: "swiggy@icici" -> "swiggy"
+  if (name.includes("@")) {
+    name = name.split("@")[0].trim();
+  }
+
+  name = name.replace(/^[\W_]+|[\W_]+$/g, "").trim();
+
+  const upper = name.toUpperCase();
+  if (CANONICAL_MERCHANTS[upper]) {
+    return CANONICAL_MERCHANTS[upper];
+  }
+
+  if (name === upper && name.length > 2) {
+    name = name
+      .toLowerCase()
+      .split(" ")
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
+  }
+
+  return name;
+}
+
+function inferCategory(merchant: string | null, rawMessage: string): string {
+  if (merchant) {
+    const merchantLower = merchant.toLowerCase();
+    for (const [category, keywords] of Object.entries(CATEGORY_MAP)) {
+      for (const kw of keywords) {
+        if (merchantLower.includes(kw)) {
+          return category;
+        }
+      }
+    }
+  }
+
+  const textLower = rawMessage.toLowerCase();
+  for (const [category, keywords] of Object.entries(CATEGORY_MAP)) {
+    for (const kw of keywords) {
+      if (textLower.includes(kw)) {
+        return category;
+      }
+    }
+  }
+
+  return "others";
+}
+
+function normalizeDate(rawDate: string): string {
+  // Format: DD-MM-YY HH:MM:SS
+  const axisDate = rawDate.match(/^(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+  if (axisDate) {
+    const [, d, m, y, hh, mm, ss] = axisDate;
+    return `20${y}-${m}-${d}T${hh}:${mm}:${ss}`;
+  }
+
+  // Format: DD/MM/YYYY or DD/MM/YY
+  const slashDate = rawDate.match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
+  if (slashDate) {
+    const [, d, m, rawY] = slashDate;
+    const y = rawY.length === 2 ? `20${rawY}` : rawY;
+    return `${y}-${m}-${d}`;
+  }
+
+  // Format: DD-Mon-YY (04-Oct-26)
+  const monMap: Record<string, string> = {
+    jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+    jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12"
+  };
+  const monDate = rawDate.match(/^(\d{2})-([A-Za-z]{3})-(\d{2,4})$/i);
+  if (monDate) {
+    const [, d, monStr, rawY] = monDate;
+    const m = monMap[monStr.toLowerCase()];
+    if (m) {
+      const y = rawY.length === 2 ? `20${rawY}` : rawY;
+      return `${y}-${m}-${d}`;
+    }
+  }
+
+  return rawDate;
+}
+
+// ============================================================================
+// 3. MAIN PARSER ENTRYPOINT
+// ============================================================================
+export function parseBankSms(message: string, sender?: string): ParsedTransaction {
+  const cleanMsg = message.trim();
+
+  // STEP 1: Sender-Keyed Template Matching
+  if (sender) {
+    const group = BANK_REGISTRY.find((g) => g.senderMatch.test(sender));
+    if (group) {
+      for (const t of group.templates) {
+        const match = cleanMsg.match(t.regex);
+        if (match && match.groups) {
+          const { amount: amtStr, last4, merchant: rawMerchant, date: rawDate } = match.groups;
+
+          const amount = amtStr ? Math.round(parseFloat(amtStr.replace(/,/g, "")) * 100) / 100 : null;
+          const merchant = rawMerchant ? cleanMerchantName(rawMerchant) : null;
+          const category = inferCategory(merchant, cleanMsg);
+          const transactionDate = rawDate ? normalizeDate(rawDate.trim()) : null;
+
+          return {
+            amount,
+            type: t.type,
+            merchant,
+            last4: last4 || null,
+            method: t.method,
+            category,
+            transactionDate,
+            templateName: t.name,
+          };
+        }
+      }
+    }
+  }
+
+  // STEP 2: Fallback Generic Matcher (if sender didn't match or was unspecified)
+  for (const group of BANK_REGISTRY) {
+    for (const t of group.templates) {
+      const match = cleanMsg.match(t.regex);
+      if (match && match.groups) {
+        const { amount: amtStr, last4, merchant: rawMerchant, date: rawDate } = match.groups;
+
+        const amount = amtStr ? Math.round(parseFloat(amtStr.replace(/,/g, "")) * 100) / 100 : null;
+        const merchant = rawMerchant ? cleanMerchantName(rawMerchant) : null;
+        const category = inferCategory(merchant, cleanMsg);
+        const transactionDate = rawDate ? normalizeDate(rawDate.trim()) : null;
+
+        return {
+          amount,
+          type: t.type,
+          merchant,
+          last4: last4 || null,
+          method: t.method,
+          category,
+          transactionDate,
+          templateName: `Fallback:${t.name}`,
+        };
+      }
+    }
+  }
+
+  // STEP 3: Return Unparsed if no template matched
+  return {
+    amount: null,
+    type: "DEBIT",
+    merchant: null,
+    last4: null,
+    method: null,
+    category: "others",
+    transactionDate: null,
+    templateName: undefined,
+  };
+}
