@@ -46,26 +46,33 @@ const BANK_REGISTRY: BankTemplateGroup[] = [
     bank: "HDFC",
     senderMatch: /HDFC/i,
     templates: [
-      // Template A: HDFC UPI Sent (Multi-line)
+      // Template A: HDFC UPI Sent / Mandate (Multi-line)
       {
         name: "HDFC UPI Sent",
         type: "DEBIT",
         method: "UPI",
-        regex: /^Sent\s+Rs\.(?<amount>[\d,.]+)\s*\n+From\s+HDFC\s+Bank\s+A\/C\s+\*(?<last4>\d{4})\s*\n+To\s+(?<merchant>[^\r\n]+)\s*\n+On\s+(?<date>\d{2}\/\d{2}\/\d{2})/im,
+        regex: /^(?:UPI\s+Mandate:\s*\n+)?Sent\s+Rs\.?\s*(?<amount>[\d,.]+)\s*\n+[fF]rom\s+HDFC\s+Bank\s+A\/[cC]\s+[*xX]?(?<last4>\d{4})\s*\n+To\s+(?<merchant>[^\r\n]+)\s*\n+(?:On\s+)?(?<date>\d{2}\/\d{2}\/\d{2,4})/im,
       },
-      // Template B: HDFC Credit Card Spend
+      // Template B: HDFC Credit Card Spend (Single-line, handles both YYYY-MM-DD:HH:MM:SS and DD-Mon-YY)
       {
         name: "HDFC Card Spend",
         type: "DEBIT",
         method: "CARD",
-        regex: /^Spent\s+Rs\.?\s*(?<amount>[\d,.]+)\s+on\s+HDFC\s+Bank\s+Card\s+(?<last4>\d{4})\s+at\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2})/i,
+        regex: /^Spent\s+Rs\.?\s*(?<amount>[\d,.]+)\s+on\s+HDFC\s+Bank\s+Card\s+(?<last4>\d{4})\s+at\s+(?<merchant>.+?)\s+on\s+(?<date>\d{4}-\d{2}-\d{2}:\d{2}:\d{2}:\d{2}|\d{2}-[A-Za-z]{3}-\d{2}(?:\s+at\s+\d{2}:\d{2}:\d{2})?)/i,
       },
-      // Template C: HDFC Refund
+      // Template C: HDFC RuPay Card on UPI (Multi-line)
+      {
+        name: "HDFC RuPay Card on UPI",
+        type: "DEBIT",
+        method: "UPI",
+        regex: /^Txn\s+Rs\.?\s*(?<amount>[\d,.]+)\s*\n+On\s+HDFC\s+Bank\s+Card\s+(?<last4>\d{4})\s*\n+At\s+(?<merchant>[^\r\n]+)\s*\n+by\s+UPI\s+[\w]+\s*\n+On\s+(?<date>\d{2}-\d{2})/im,
+      },
+      // Template D: HDFC Refund
       {
         name: "HDFC Refund",
         type: "CREDIT",
         method: "CARD",
-        regex: /^Refund\s+of\s+Rs\.?\s*(?<amount>[\d,.]+)\s+credited\s+to\s+your\s+HDFC\s+Bank\s+Card\s+(?<last4>\d{4})\s+from\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2})/i,
+        regex: /^Refund\s+of\s+Rs\.?\s*(?<amount>[\d,.]+)\s+credited\s+to\s+your\s+HDFC\s+Bank\s+Card\s+(?<last4>\d{4})\s+from\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2}(?:\s+at\s+\d{2}:\d{2}:\d{2})?)/i,
       },
     ],
   },
@@ -167,7 +174,7 @@ const CATEGORY_MAP: Record<string, string[]> = {
   ],
   utilities: [
     "bescom", "airtel", "jio", "vi", "vodafone", "electricity", "billdesk",
-    "tatapower", "gas", "water", "broadband", "act fibernet", "recharge"
+    "tatapower", "gas", "water", "broadband", "act fibernet", "recharge", "apple"
   ],
   entertainment: [
     "netflix", "spotify", "pvr", "inox", "bookmyshow", "hotstar", "prime video",
@@ -205,6 +212,10 @@ const CANONICAL_MERCHANTS: Record<string, string> = {
   "UBER": "Uber",
   "ZOMATO": "Zomato",
   "SWIGGY": "Swiggy",
+  "SWIGGY FOOD": "Swiggy",
+  "MYNTRA": "Myntra",
+  "APPLE MEDIA SERVICES": "Apple",
+  "APPLE": "Apple",
   "IRCTC": "IRCTC",
   "CRUSH CORNER": "Crush Corner",
   "BLINKIT": "Blinkit",
@@ -274,6 +285,20 @@ function inferCategory(merchant: string | null, rawMessage: string): string {
 }
 
 function normalizeDate(rawDate: string): string {
+  // Format: YYYY-MM-DD:HH:MM:SS (HDFC card spend)
+  const hdfcDateTime = rawDate.match(/^(\d{4}-\d{2}-\d{2}):(\d{2}:\d{2}:\d{2})$/);
+  if (hdfcDateTime) {
+    return `${hdfcDateTime[1]}T${hdfcDateTime[2]}`;
+  }
+
+  // Format: DD-MM (HDFC RuPay UPI) -> current year YYYY-MM-DD
+  const ddMm = rawDate.match(/^(\d{2})-(\d{2})$/);
+  if (ddMm) {
+    const [, d, m] = ddMm;
+    const y = new Date().getFullYear();
+    return `${y}-${m}-${d}`;
+  }
+
   // Format: DD-MM-YY HH:MM:SS
   const axisDate = rawDate.match(/^(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
   if (axisDate) {
@@ -289,17 +314,20 @@ function normalizeDate(rawDate: string): string {
     return `${y}-${m}-${d}`;
   }
 
-  // Format: DD-Mon-YY (04-Oct-26)
+  // Format: DD-Mon-YY [at HH:MM:SS] (04-Oct-26 or 05-OCT-26 at 14:32:05)
   const monMap: Record<string, string> = {
     jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
     jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12"
   };
-  const monDate = rawDate.match(/^(\d{2})-([A-Za-z]{3})-(\d{2,4})$/i);
+  const monDate = rawDate.match(/^(\d{2})-([A-Za-z]{3})-(\d{2,4})(?:\s+(?:at\s+)?(\d{2}):(\d{2}):(\d{2}))?$/i);
   if (monDate) {
-    const [, d, monStr, rawY] = monDate;
+    const [, d, monStr, rawY, hh, mm, ss] = monDate;
     const m = monMap[monStr.toLowerCase()];
     if (m) {
       const y = rawY.length === 2 ? `20${rawY}` : rawY;
+      if (hh && mm && ss) {
+        return `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
+      }
       return `${y}-${m}-${d}`;
     }
   }
