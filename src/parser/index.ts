@@ -74,6 +74,13 @@ const BANK_REGISTRY: BankTemplateGroup[] = [
         method: "CARD",
         regex: /^Refund\s+of\s+Rs\.?\s*(?<amount>[\d,.]+)\s+credited\s+to\s+your\s+HDFC\s+Bank\s+Card\s+(?<last4>\d{4})\s+from\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2}(?:\s+at\s+\d{2}:\d{2}:\d{2})?)/i,
       },
+      // Template E: HDFC Refund Initiated
+      {
+        name: "HDFC Refund Initiated",
+        type: "CREDIT",
+        method: "CARD",
+        regex: /^Refund\s+initiated:\s*Amt:\s*Rs\.?\s*(?<amount>[\d,.]+)\s+on\s+HDFC\s+Bank\s+Credit\s+Card\s+(?<last4>\d{4})/i,
+      },
     ],
   },
 
@@ -214,6 +221,7 @@ const CANONICAL_MERCHANTS: Record<string, string> = {
   "SWIGGY": "Swiggy",
   "SWIGGY FOOD": "Swiggy",
   "MYNTRA": "Myntra",
+  "CLEARTRIP": "Cleartrip",
   "APPLE MEDIA SERVICES": "Apple",
   "APPLE": "Apple",
   "IRCTC": "IRCTC",
@@ -230,6 +238,9 @@ function cleanMerchantName(raw: string): string {
     name = name.replace(/^UPI[-_\s]+/i, "").trim();
   }
 
+  // Strip payment gateway prefixes (PYU*, PAYU*, RZP*, RAZORPAY*, BILLDESK*, CCAVENUE*, PAYTM*, AIRPAY*)
+  name = name.replace(/^(?:PYU\*|PAYU\*|RZP\*|RAZORPAY\*|BILLDESK\*|CCAVENUE\*|PAYTM\*|AIRPAY\*)/i, "").trim();
+
   // Handle slash formats like "UPI/SWIGGY/12345"
   if (name.includes("/")) {
     const parts = name.split("/").map((p) => p.trim()).filter(Boolean);
@@ -241,6 +252,9 @@ function cleanMerchantName(raw: string): string {
   if (name.includes("@")) {
     name = name.split("@")[0].trim();
   }
+
+  // Strip common corporate suffixes: PVTLTD, PVT LTD, PRIVATE LIMITED, LTD, LIMITED
+  name = name.replace(/(?:[-_\s]+)?(?:PVT\s*LTD|PRIVATE\s*LIMITED|PVTLTD|LTD|LIMITED)$/i, "").trim();
 
   name = name.replace(/^[\W_]+|[\W_]+$/g, "").trim();
 
@@ -265,7 +279,9 @@ function inferCategory(merchant: string | null, rawMessage: string): string {
     const merchantLower = merchant.toLowerCase();
     for (const [category, keywords] of Object.entries(CATEGORY_MAP)) {
       for (const kw of keywords) {
-        if (merchantLower.includes(kw)) {
+        if (kw === "cred") {
+          if (/\bcred\b/i.test(merchant)) return category;
+        } else if (merchantLower.includes(kw)) {
           return category;
         }
       }
@@ -275,7 +291,9 @@ function inferCategory(merchant: string | null, rawMessage: string): string {
   const textLower = rawMessage.toLowerCase();
   for (const [category, keywords] of Object.entries(CATEGORY_MAP)) {
     for (const kw of keywords) {
-      if (textLower.includes(kw)) {
+      if (kw === "cred") {
+        if (/\bcred\b/i.test(rawMessage)) return category;
+      } else if (textLower.includes(kw)) {
         return category;
       }
     }
@@ -351,7 +369,11 @@ export function parseBankSms(message: string, sender?: string): ParsedTransactio
           const { amount: amtStr, last4, merchant: rawMerchant, date: rawDate } = match.groups;
 
           const amount = amtStr ? Math.round(parseFloat(amtStr.replace(/,/g, "")) * 100) / 100 : null;
-          const merchant = rawMerchant ? cleanMerchantName(rawMerchant) : null;
+          const merchant = rawMerchant
+            ? cleanMerchantName(rawMerchant)
+            : t.type === "CREDIT"
+              ? "Refund"
+              : null;
           const category = inferCategory(merchant, cleanMsg);
           const transactionDate = rawDate ? normalizeDate(rawDate.trim()) : null;
 
@@ -378,7 +400,11 @@ export function parseBankSms(message: string, sender?: string): ParsedTransactio
         const { amount: amtStr, last4, merchant: rawMerchant, date: rawDate } = match.groups;
 
         const amount = amtStr ? Math.round(parseFloat(amtStr.replace(/,/g, "")) * 100) / 100 : null;
-        const merchant = rawMerchant ? cleanMerchantName(rawMerchant) : null;
+        const merchant = rawMerchant
+          ? cleanMerchantName(rawMerchant)
+          : t.type === "CREDIT"
+            ? "Refund"
+            : null;
         const category = inferCategory(merchant, cleanMsg);
         const transactionDate = rawDate ? normalizeDate(rawDate.trim()) : null;
 
