@@ -100,6 +100,13 @@ export const openApiSpec = {
             schema: { type: "string", example: "2026-10" },
             description: "Filter by YYYY-MM",
           },
+          {
+            name: "status",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["PARSED", "UNPARSED", "DISCARDED"] },
+            description: "Filter by transaction status",
+          },
         ],
         responses: {
           200: {

@@ -13,7 +13,7 @@ transactionsRoute.get("/summary", async (c) => {
     const from = c.req.query("from");
     const to = c.req.query("to");
 
-    let whereClause = "WHERE t.type = ?";
+    let whereClause = "WHERE t.type = ? AND t.status = 'PARSED'";
     const bindings: any[] = [type];
 
     if (from) {
@@ -73,13 +73,23 @@ transactionsRoute.get("/", async (c) => {
   try {
     const limit = Number(c.req.query("limit")) || 50;
     const month = c.req.query("month"); // e.g. "2026-10"
+    const status = c.req.query("status"); // e.g. "PARSED", "UNPARSED", "DISCARDED"
 
     let query = "SELECT * FROM transactions";
+    const conditions: string[] = [];
     const bindings: any[] = [];
 
     if (month) {
-      query += " WHERE transaction_date LIKE ? || '%'";
+      conditions.push("transaction_date LIKE ? || '%'");
       bindings.push(month);
+    }
+    if (status) {
+      conditions.push("status = ?");
+      bindings.push(status.toUpperCase());
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(" AND ")}`;
     }
 
     query += " ORDER BY transaction_date DESC LIMIT ?";
@@ -149,19 +159,24 @@ transactionsRoute.post("/reprocess", async (c) => {
 
     const reprocessedResults: any[] = [];
     let updatedCount = 0;
+    let discardedCount = 0;
     let stillUnparsedCount = 0;
 
     for (const row of rows) {
       // Check if message matches an intentional discard pattern
       const discardMatch = matchDiscardRule(row.raw_message);
       if (discardMatch) {
-        stillUnparsedCount++;
+        await c.env.DB.prepare(
+          `UPDATE transactions SET status = 'DISCARDED' WHERE id = ?`
+        ).bind(row.id).run();
+
+        discardedCount++;
         reprocessedResults.push({
           id: row.id,
           status: "DISCARDED",
           reason: discardMatch.reason,
           rule: discardMatch.rule,
-          notice: "Identified as non-spend notification (bill payment / reminder / advisory)",
+          notice: "Identified as non-spend notification and marked DISCARDED in database",
         });
         continue;
       }
@@ -228,6 +243,7 @@ transactionsRoute.post("/reprocess", async (c) => {
       success: true,
       processed: rows.length,
       updated: updatedCount,
+      discarded: discardedCount,
       stillUnparsed: stillUnparsedCount,
       results: reprocessedResults,
     });
