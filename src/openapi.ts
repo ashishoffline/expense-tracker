@@ -149,6 +149,34 @@ export const openApiSpec = {
         },
       },
     },
+    "/transactions/reprocess": {
+      post: {
+        summary: "Reprocess Unparsed Transactions",
+        description: "Re-runs parser and account linking over unparsed transactions by ID or in safe batches.",
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Optional specific transaction ID to reprocess",
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", default: 10, maximum: 25 },
+            description: "Maximum unparsed transactions to process in batch",
+          },
+        ],
+        responses: {
+          200: {
+            description: "Reprocessing results summary.",
+          },
+        },
+      },
+    },
     "/accounts": {
       get: {
         summary: "List Accounts & Cards",

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { generateDedupId } from "../utils/crypto";
-import { isOtpMessage, isScheduledReminderMessage } from "../utils/otp";
+import { matchDiscardRule } from "../parser/discard";
 import { parseBankSms } from "../parser";
 
 export const captureRoute = new Hono<{ Bindings: Env }>();
@@ -45,18 +45,13 @@ captureRoute.post("/", async (c) => {
     return c.json({ success: false, error: "Field 'message' is required" }, 400);
   }
 
-  // 3. Deterministic Non-Transaction Filtering (Silently ignored, zero log noise)
-  if (isOtpMessage(message)) {
+  // 3. Deterministic Ingestion Discard Gate (Silently ignored, zero log noise)
+  const discard = matchDiscardRule(message);
+  if (discard) {
     return c.json({
       action: "ignored",
-      reason: "OTP",
-    }, 200);
-  }
-
-  if (isScheduledReminderMessage(message)) {
-    return c.json({
-      action: "ignored",
-      reason: "SCHEDULED_REMINDER",
+      reason: discard.reason,
+      rule: discard.rule,
     }, 200);
   }
 

@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
+import { parseBankSms } from "../parser";
+import { matchDiscardRule } from "../parser/discard";
 
 export const transactionsRoute = new Hono<{ Bindings: Env }>();
 
@@ -90,6 +92,150 @@ transactionsRoute.get("/", async (c) => {
       {
         success: false,
         error: error instanceof Error ? error.message : "Failed to fetch transactions",
+      },
+      500
+    );
+  }
+});
+
+// 3. Reprocess unparsed transactions endpoint (by ID or safe batch)
+transactionsRoute.post("/reprocess", async (c) => {
+  // 1. Ingestion Bearer Token Authentication
+  const authHeader = c.req.header("Authorization");
+  const expectedToken = c.env.INGESTION_TOKEN;
+
+  if (!authHeader || authHeader !== `Bearer ${expectedToken}`) {
+    return c.json({ success: false, error: "Unauthorized" }, 401);
+  }
+
+  try {
+    let targetId = c.req.query("id");
+    let limit = Math.min(Number(c.req.query("limit")) || 10, 25);
+
+    if (!targetId && c.req.header("Content-Type")?.includes("application/json")) {
+      try {
+        const body = await c.req.json<{ id?: string; limit?: number }>();
+        if (body.id) targetId = body.id;
+        if (body.limit) limit = Math.min(body.limit, 25);
+      } catch {
+        // ignore JSON parse error, use query params
+      }
+    }
+
+    interface UnparsedRow {
+      id: string;
+      sender: string;
+      raw_message: string;
+      transaction_date: string;
+      status: string;
+    }
+
+    let rows: UnparsedRow[] = [];
+    if (targetId) {
+      const row = await c.env.DB.prepare(
+        `SELECT id, sender, raw_message, transaction_date, status FROM transactions WHERE id = ? LIMIT 1`
+      ).bind(targetId).first<UnparsedRow>();
+
+      if (!row) {
+        return c.json({ success: false, error: `Transaction ${targetId} not found` }, 404);
+      }
+      rows = [row];
+    } else {
+      const { results } = await c.env.DB.prepare(
+        `SELECT id, sender, raw_message, transaction_date, status FROM transactions WHERE status = 'UNPARSED' ORDER BY created_at ASC LIMIT ?`
+      ).bind(limit).all<UnparsedRow>();
+      rows = results;
+    }
+
+    const reprocessedResults: any[] = [];
+    let updatedCount = 0;
+    let stillUnparsedCount = 0;
+
+    for (const row of rows) {
+      // Check if message matches an intentional discard pattern
+      const discardMatch = matchDiscardRule(row.raw_message);
+      if (discardMatch) {
+        stillUnparsedCount++;
+        reprocessedResults.push({
+          id: row.id,
+          status: "DISCARDED",
+          reason: discardMatch.reason,
+          rule: discardMatch.rule,
+          notice: "Identified as non-spend notification (bill payment / reminder / advisory)",
+        });
+        continue;
+      }
+
+      const parsed = parseBankSms(row.raw_message, row.sender);
+
+      if (parsed.amount !== null) {
+        let accountId: string | null = null;
+        if (parsed.last4) {
+          const acc = await c.env.DB.prepare(
+            `SELECT id FROM accounts WHERE card_last4 = ? OR account_last4 = ? LIMIT 1`
+          ).bind(parsed.last4, parsed.last4).first<{ id: string }>();
+          if (acc) accountId = acc.id;
+        }
+
+        const txnDate = parsed.transactionDate || row.transaction_date;
+
+        await c.env.DB.prepare(
+          `UPDATE transactions SET
+            amount = ?,
+            type = ?,
+            merchant = ?,
+            account_id = ?,
+            category = ?,
+            method = ?,
+            status = 'PARSED',
+            transaction_date = ?
+          WHERE id = ?`
+        ).bind(
+          parsed.amount,
+          parsed.type,
+          parsed.merchant,
+          accountId,
+          parsed.category,
+          parsed.method,
+          txnDate,
+          row.id
+        ).run();
+
+        updatedCount++;
+        reprocessedResults.push({
+          id: row.id,
+          status: "PARSED",
+          amount: parsed.amount,
+          type: parsed.type,
+          merchant: parsed.merchant,
+          account_id: accountId,
+          category: parsed.category,
+          method: parsed.method,
+          template: parsed.templateName,
+        });
+      } else {
+        stillUnparsedCount++;
+        reprocessedResults.push({
+          id: row.id,
+          status: "UNPARSED",
+          sender: row.sender,
+          notice: "No matching template found yet",
+        });
+      }
+    }
+
+    return c.json({
+      success: true,
+      processed: rows.length,
+      updated: updatedCount,
+      stillUnparsed: stillUnparsedCount,
+      results: reprocessedResults,
+    });
+  } catch (error) {
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Reprocessing failed",
       },
       500
     );

@@ -74,12 +74,12 @@ const BANK_REGISTRY: BankTemplateGroup[] = [
         method: "CARD",
         regex: /^Refund\s+of\s+Rs\.?\s*(?<amount>[\d,.]+)\s+credited\s+to\s+your\s+HDFC\s+Bank\s+Card\s+(?<last4>\d{4})\s+from\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2}(?:\s+at\s+\d{2}:\d{2}:\d{2})?)/i,
       },
-      // Template E: HDFC Refund Initiated
+      // Template E: HDFC Merchant Refund
       {
-        name: "HDFC Refund Initiated",
+        name: "HDFC Merchant Refund",
         type: "CREDIT",
         method: "CARD",
-        regex: /^Refund\s+initiated:\s*Amt:\s*Rs\.?\s*(?<amount>[\d,.]+)\s+on\s+HDFC\s+Bank\s+Credit\s+Card\s+(?<last4>\d{4})/i,
+        regex: /^Alert!\s+Rs\.?\s*(?<amount>[\d,.]+)\s+refunded\s+by\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}\/[A-Za-z]{3}\/\d{4})\s+&\s+adjusted\s+against\s+HDFC\s+Bank\s+Credit\s+Card\s+(?<last4>\d{4})/i,
       },
     ],
   },
@@ -90,10 +90,16 @@ const BANK_REGISTRY: BankTemplateGroup[] = [
     senderMatch: /ICICI/i,
     templates: [
       {
-        name: "ICICI Card Spend on date on merchant",
+        name: "ICICI Card Spend",
         type: "DEBIT",
         method: "CARD",
-        regex: /^INR\s+(?<amount>[\d,.]+)\s+spent\s+using\s+ICICI\s+Bank\s+Card\s+[xX*]+(?<last4>\d{4})\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2})\s+on\s+(?<merchant>[^.]+?)\.\s+Avl\s+Limit/i,
+        regex: /^(?:INR|Rs\.?)\s*(?<amount>[\d,.]+)\s+spent\s+(?:on|using)\s+ICICI\s+Bank\s+Card\s+[xX*]+(?<last4>\d{4})\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2})\s+(?:at|on)\s+(?<merchant>[^.]+?)\.\s+Avl\s+(?:Limit|Lmt)/i,
+      },
+      {
+        name: "ICICI Card Refund",
+        type: "CREDIT",
+        method: "CARD",
+        regex: /^(?<merchant>.+?)\s+refund\s+of\s+Rs\.?\s*(?<amount>[\d,.]+)\s+credited\s+to\s+ICICI\s+Bank\s+Credit\s+Card\s+[xX*]+(?<last4>\d{4})\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2})/i,
       },
     ],
   },
@@ -258,6 +264,15 @@ function cleanMerchantName(raw: string): string {
 
   name = name.replace(/^[\W_]+|[\W_]+$/g, "").trim();
 
+  // Common brand prefix shortcuts
+  if (/^MYNTRA\b/i.test(name)) return "Myntra";
+  if (/^FLIPKART\b/i.test(name)) return "Flipkart";
+  if (/^APOLLO\b/i.test(name)) return "Apollo Pharmacy";
+  if (/^AMAZON\b/i.test(name)) return "Amazon";
+  if (/^SWIGGY\b/i.test(name)) return "Swiggy";
+  if (/^ZOMATO\b/i.test(name)) return "Zomato";
+  if (/^UBER\b/i.test(name)) return "Uber";
+
   const upper = name.toUpperCase();
   if (CANONICAL_MERCHANTS[upper]) {
     return CANONICAL_MERCHANTS[upper];
@@ -332,12 +347,12 @@ function normalizeDate(rawDate: string): string {
     return `${y}-${m}-${d}`;
   }
 
-  // Format: DD-Mon-YY [at HH:MM:SS] (04-Oct-26 or 05-OCT-26 at 14:32:05)
+  // Format: DD-Mon-YY or DD/Mon/YYYY [at HH:MM:SS] (04-Oct-26 or 05/OCT/2026 or 05-OCT-26 at 14:32:05)
   const monMap: Record<string, string> = {
     jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
     jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12"
   };
-  const monDate = rawDate.match(/^(\d{2})-([A-Za-z]{3})-(\d{2,4})(?:\s+(?:at\s+)?(\d{2}):(\d{2}):(\d{2}))?$/i);
+  const monDate = rawDate.match(/^(\d{2})[-/]([A-Za-z]{3})[-/](\d{2,4})(?:\s+(?:at\s+)?(\d{2}):(\d{2}):(\d{2}))?$/i);
   if (monDate) {
     const [, d, monStr, rawY, hh, mm, ss] = monDate;
     const m = monMap[monStr.toLowerCase()];
