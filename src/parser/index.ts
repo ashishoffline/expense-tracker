@@ -245,8 +245,8 @@ function cleanMerchantName(raw: string): string {
     name = name.replace(/^UPI[-_\s]+/i, "").trim();
   }
 
-  // Strip payment gateway prefixes (PYU*, PAYU*, RZP*, RAZORPAY*, BILLDESK*, CCAVENUE*, PAYTM*, AIRPAY*)
-  name = name.replace(/^(?:PYU\*|PAYU\*|RZP\*|RAZORPAY\*|BILLDESK\*|CCAVENUE\*|PAYTM\*|AIRPAY\*)/i, "").trim();
+  // Strip payment gateway / channel prefixes (PYU*, PAYU*, RZP*, RAZORPAY*, BILLDESK*, CCAVENUE*, PAYTM*, AIRPAY*, ECOM*, POS*, IN*, etc.)
+  name = name.replace(/^(?:PYU\*|PAYU\*|RZP\*|RAZORPAY\*|BILLDESK\*|CCAVENUE\*|PAYTM\*|AIRPAY\*|ECOM\*|E-COM\*|POS\*|IN\*|SI\*|DIR\*|NEFT\*|IMPS\*)/i, "").trim();
 
   // Handle slash formats like "UPI/SWIGGY/12345"
   if (name.includes("/")) {
@@ -265,14 +265,24 @@ function cleanMerchantName(raw: string): string {
 
   name = name.replace(/^[\W_]+|[\W_]+$/g, "").trim();
 
-  // Common brand prefix shortcuts
-  if (/^MYNTRA\b/i.test(name)) return "Myntra";
-  if (/^FLIPKART\b/i.test(name)) return "Flipkart";
-  if (/^APOLLO\b/i.test(name)) return "Apollo Pharmacy";
-  if (/^AMAZON\b/i.test(name)) return "Amazon";
-  if (/^SWIGGY\b/i.test(name)) return "Swiggy";
-  if (/^ZOMATO\b/i.test(name)) return "Zomato";
-  if (/^UBER\b/i.test(name)) return "Uber";
+  // Broad canonical brand recognition
+  if (/FLIPKART|\bFKRT\b/i.test(name)) return "Flipkart";
+  if (/AMAZON\s*PAY|AMAZONPAY/i.test(name)) return "Amazon Pay";
+  if (/AMAZON|\bAMZN\b/i.test(name)) return "Amazon";
+  if (/MYNTRA/i.test(name)) return "Myntra";
+  if (/INSTAMART/i.test(name)) return "Swiggy Instamart";
+  if (/SWIGGY/i.test(name)) return "Swiggy";
+  if (/BLINKIT/i.test(name)) return "Blinkit";
+  if (/ZOMATO/i.test(name)) return "Zomato";
+  if (/APOLLO/i.test(name)) return "Apollo Pharmacy";
+  if (/UBER/i.test(name)) return "Uber";
+  if (/OLA|\bANI\s*TECH\b/i.test(name)) return "Ola";
+  if (/ZEPTO/i.test(name)) return "Zepto";
+  if (/CLEARTRIP/i.test(name)) return "Cleartrip";
+  if (/NETFLIX/i.test(name)) return "Netflix";
+  if (/SPOTIFY/i.test(name)) return "Spotify";
+  if (/IRCTC/i.test(name)) return "IRCTC";
+  if (/APPLE/i.test(name)) return "Apple";
 
   const upper = name.toUpperCase();
   if (CANONICAL_MERCHANTS[upper]) {
