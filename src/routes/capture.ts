@@ -3,6 +3,7 @@ import type { Env } from "../types";
 import { generateDedupId } from "../utils/crypto";
 import { matchDiscardRule } from "../parser/discard";
 import { parseBankSms } from "../parser";
+import { toISTString } from "../parser/dates";
 
 export const captureRoute = new Hono<{ Bindings: Env }>();
 
@@ -57,20 +58,13 @@ captureRoute.post("/", async (c) => {
 
   // 4. Deterministic Identity / Deduplication Fingerprint
   const id = await generateDedupId(sender, message);
-  const normalizedReceivedAt = receivedAt && !isNaN(Date.parse(receivedAt))
-    ? new Date(receivedAt).toISOString()
-    : new Date().toISOString();
+  const nowIST = toISTString();
+  const normalizedReceivedAt = toISTString(receivedAt);
   const sourceUser = source?.trim() || "unknown";
 
-  // 5. Parse Bank SMS via Sender-Keyed Template Registry
-  const parsed = parseBankSms(message, sender.trim());
+  // 5. Parse Bank SMS via Sender-Keyed Template Registry (with fallback timestamp)
+  const parsed = parseBankSms(message, sender.trim(), normalizedReceivedAt);
   const status = parsed.amount !== null ? "PARSED" : "UNPARSED";
-
-  // Use SMS datetime ONLY if it includes a complete time component;
-  // otherwise, take the full timestamp from the request payload (receivedAt).
-  const txnDate = (parsed.transactionDate && parsed.hasTime)
-    ? parsed.transactionDate
-    : normalizedReceivedAt;
 
   // 6. Database Operations with Failure Replay Logging
   try {
@@ -88,9 +82,9 @@ captureRoute.post("/", async (c) => {
     const insertResult = await c.env.DB.prepare(
       `INSERT INTO transactions (
         id, source_user, sender, raw_message, transaction_date,
-        amount, type, merchant, account_id, category, method, status
+        amount, type, merchant, account_id, category, method, status, created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO NOTHING`
     )
       .bind(
@@ -98,14 +92,15 @@ captureRoute.post("/", async (c) => {
         sourceUser,
         sender.trim(),
         message.trim(),
-        txnDate,
+        parsed.transactionDate,
         parsed.amount,
         parsed.type,
         parsed.merchant,
         accountId,
         parsed.category,
         parsed.method,
-        status
+        status,
+        nowIST
       )
       .run();
 

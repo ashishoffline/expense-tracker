@@ -1,3 +1,6 @@
+import { resolveMerchant } from "./merchants";
+import { parseTransactionDate } from "./dates";
+
 export interface ParsedTransaction {
   amount: number | null;
   type: "DEBIT" | "CREDIT";
@@ -5,8 +8,7 @@ export interface ParsedTransaction {
   last4: string | null;
   method: "CARD" | "UPI" | "NETBANKING" | null;
   category: string;
-  transactionDate: string | null;
-  hasTime: boolean;
+  transactionDate: string;
   templateName?: string;
 }
 
@@ -161,309 +163,28 @@ const BANK_REGISTRY: BankTemplateGroup[] = [
     ],
   },
 ];
-
 // ============================================================================
-// 2. CATEGORY DICTIONARY & CANONICAL MERCHANTS
+// 2. MAIN PARSER ENTRYPOINT
 // ============================================================================
-const CATEGORY_MAP: Record<string, string[]> = {
-  dining: [
-    "swiggy", "zomato", "eats", "restaurant", "cafe", "burger", "starbucks",
-    "chai", "mcdonald", "dominos", "pizza", "kfc", "biryani", "subway",
-    "haldiram", "crush corner", "food", "kitchen", "bakery", "sweets", "dhaba"
-  ],
-  groceries: [
-    "blinkit", "zepto", "instamart", "bigbasket", "dmart", "natures basket",
-    "supermarket", "grocery", "milk", "country delight", "bazaar", "fresh", "provisions"
-  ],
-  fuel: [
-    "petrol", "fuel", "hpcl", "bpcl", "iocl", "shell", "cng", "auto lpg", "pump"
-  ],
-  travel: [
-    "uber", "ola", "rapido", "irctc", "indigo", "air india", "makemytrip",
-    "cleartrip", "fastag", "metro", "goibibo", "flight", "toll", "railways", "transit"
-  ],
-  shopping: [
-    "amazon", "amazonpay", "flipkart", "myntra", "ajio", "zara", "h&m", "croma", "reliance",
-    "tata cliq", "nykaa", "uniqlo", "retail", "decathlon", "lifestyle", "shoppers stop"
-  ],
-  utilities: [
-    "bescom", "airtel", "jio", "vi", "vodafone", "electricity", "billdesk",
-    "tatapower", "gas", "water", "broadband", "act fibernet", "recharge", "apple"
-  ],
-  entertainment: [
-    "netflix", "spotify", "pvr", "inox", "bookmyshow", "hotstar", "prime video",
-    "cinema", "youtube", "movie"
-  ],
-  healthcare: [
-    "apollo", "pharmacy", "1mg", "practo", "medplus", "hospital", "dental",
-    "doctor", "lab", "pharmeasy", "clinic", "medical"
-  ],
-  personal_care: [
-    "urban company", "salon", "enrich", "haircut", "spa"
-  ],
-  investments: [
-    "zerodha", "groww", "coin", "indmoney", "mutual fund", "sip", "uti"
-  ],
-  cc_bill: [
-    "cred", "cheq", "credit card bill", "cc payment", "bill payment"
-  ],
-  rent: [
-    "rent", "nobroker", "housing"
-  ],
-  education: [
-    "school", "college", "fees", "udemy", "coursera"
-  ]
-};
-
-const CANONICAL_MERCHANTS: Record<string, string> = {
-  "FLIPKART INTERNET PRIVATE": "Flipkart",
-  "FLIPKART": "Flipkart",
-  "AMAZONPAYINDIAPRIVATET": "Amazon Pay",
-  "AMAZON PAY IN G": "Amazon Pay",
-  "AMAZON PAY": "Amazon Pay",
-  "AMAZON": "Amazon",
-  "UBER INDIA SYSTEMS": "Uber",
-  "UBER": "Uber",
-  "ZOMATO": "Zomato",
-  "SWIGGY": "Swiggy",
-  "SWIGGY FOOD": "Swiggy",
-  "MYNTRA": "Myntra",
-  "CLEARTRIP": "Cleartrip",
-  "APPLE MEDIA SERVICES": "Apple",
-  "APPLE": "Apple",
-  "IRCTC": "IRCTC",
-  "CRUSH CORNER": "Crush Corner",
-  "BLINKIT": "Blinkit",
-  "ZEPTO": "Zepto",
-};
-
-function cleanMerchantName(raw: string): string {
-  let name = raw.trim();
-
-  // Strip leading UPI prefix (e.g. "UPI-AMBUJ KUMAR" -> "AMBUJ KUMAR")
-  if (/^UPI[-_\s]+/i.test(name)) {
-    name = name.replace(/^UPI[-_\s]+/i, "").trim();
-  }
-
-  // Strip payment gateway / channel prefixes (PYU*, PAYU*, RZP*, RAZORPAY*, BILLDESK*, CCAVENUE*, PAYTM*, AIRPAY*, ECOM*, POS*, IN*, etc.)
-  name = name.replace(/^(?:PYU\*|PAYU\*|RZP\*|RAZORPAY\*|BILLDESK\*|CCAVENUE\*|PAYTM\*|AIRPAY\*|ECOM\*|E-COM\*|POS\*|IN\*|SI\*|DIR\*|NEFT\*|IMPS\*)/i, "").trim();
-
-  // Handle slash formats like "UPI/SWIGGY/12345"
-  if (name.includes("/")) {
-    const parts = name.split("/").map((p) => p.trim()).filter(Boolean);
-    const candidate = parts.find((p) => p.toUpperCase() !== "UPI" && isNaN(Number(p)));
-    if (candidate) name = candidate;
-  }
-
-  // Handle UPI VPA handles: "swiggy@icici" -> "swiggy"
-  if (name.includes("@")) {
-    name = name.split("@")[0].trim();
-  }
-
-  // Strip common corporate suffixes: PVTLTD, PVT LTD, PRIVATE LIMITED, LTD, LIMITED
-  name = name.replace(/(?:[-_\s]+)?(?:PVT\s*LTD|PRIVATE\s*LIMITED|PVTLTD|LTD|LIMITED)$/i, "").trim();
-
-  name = name.replace(/^[\W_]+|[\W_]+$/g, "").trim();
-
-  // Broad canonical brand recognition
-  if (/FLIPKART|\bFKRT\b/i.test(name)) return "Flipkart";
-  if (/AMAZON\s*PAY|AMAZONPAY/i.test(name)) return "Amazon Pay";
-  if (/AMAZON|\bAMZN\b/i.test(name)) return "Amazon";
-  if (/MYNTRA/i.test(name)) return "Myntra";
-  if (/INSTAMART/i.test(name)) return "Swiggy Instamart";
-  if (/SWIGGY/i.test(name)) return "Swiggy";
-  if (/BLINKIT/i.test(name)) return "Blinkit";
-  if (/ZOMATO/i.test(name)) return "Zomato";
-  if (/APOLLO/i.test(name)) return "Apollo Pharmacy";
-  if (/UBER/i.test(name)) return "Uber";
-  if (/OLA|\bANI\s*TECH\b/i.test(name)) return "Ola";
-  if (/ZEPTO/i.test(name)) return "Zepto";
-  if (/CLEARTRIP/i.test(name)) return "Cleartrip";
-  if (/NETFLIX/i.test(name)) return "Netflix";
-  if (/SPOTIFY/i.test(name)) return "Spotify";
-  if (/IRCTC/i.test(name)) return "IRCTC";
-  if (/APPLE/i.test(name)) return "Apple";
-
-  const upper = name.toUpperCase();
-  if (CANONICAL_MERCHANTS[upper]) {
-    return CANONICAL_MERCHANTS[upper];
-  }
-
-  if (name === upper && name.length > 2) {
-    name = name
-      .toLowerCase()
-      .split(" ")
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-      .join(" ");
-  }
-
-  return name;
-}
-
-function inferCategory(merchant: string | null, rawMessage: string): string {
-  if (merchant) {
-    const merchantLower = merchant.toLowerCase();
-    for (const [category, keywords] of Object.entries(CATEGORY_MAP)) {
-      for (const kw of keywords) {
-        if (kw === "cred") {
-          if (/\bcred\b/i.test(merchant)) return category;
-        } else if (merchantLower.includes(kw)) {
-          return category;
-        }
-      }
-    }
-  }
-
-  const textLower = rawMessage.toLowerCase();
-  for (const [category, keywords] of Object.entries(CATEGORY_MAP)) {
-    for (const kw of keywords) {
-      if (kw === "cred") {
-        if (/\bcred\b/i.test(rawMessage)) return category;
-      } else if (textLower.includes(kw)) {
-        return category;
-      }
-    }
-  }
-
-  return "others";
-}
-
-interface NormalizedDate {
-  date: string;
-  hasTime: boolean;
-}
-
-function normalizeDate(rawDate: string): NormalizedDate {
-  // Format: YYYY-MM-DD:HH:MM:SS (HDFC card spend)
-  const hdfcDateTime = rawDate.match(/^(\d{4}-\d{2}-\d{2}):(\d{2}:\d{2}:\d{2})$/);
-  if (hdfcDateTime) {
-    return {
-      date: `${hdfcDateTime[1]}T${hdfcDateTime[2]}`,
-      hasTime: true,
-    };
-  }
-
-  // Format: DD-MM-YY HH:MM:SS (Axis card spend)
-  const axisDate = rawDate.match(/^(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
-  if (axisDate) {
-    const [, d, m, y, hh, mm, ss] = axisDate;
-    return {
-      date: `20${y}-${m}-${d}T${hh}:${mm}:${ss}`,
-      hasTime: true,
-    };
-  }
-
-  // Format: DD-Mon-YY or DD/Mon/YYYY [at HH:MM:SS] (04-Oct-26 or 05/OCT/2026 or 05-OCT-26 at 14:32:05)
-  const monMap: Record<string, string> = {
-    jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
-    jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12"
-  };
-  const monDate = rawDate.match(/^(\d{2})[-/]([A-Za-z]{3})[-/](\d{2,4})(?:\s+(?:at\s+)?(\d{2}):(\d{2}):(\d{2}))?$/i);
-  if (monDate) {
-    const [, d, monStr, rawY, hh, mm, ss] = monDate;
-    const m = monMap[monStr.toLowerCase()];
-    if (m) {
-      const y = rawY.length === 2 ? `20${rawY}` : rawY;
-      if (hh && mm && ss) {
-        return {
-          date: `${y}-${m}-${d}T${hh}:${mm}:${ss}`,
-          hasTime: true,
-        };
-      }
-      return {
-        date: `${y}-${m}-${d}`,
-        hasTime: false,
-      };
-    }
-  }
-
-  // Format: DD-MM (HDFC RuPay UPI) -> current year YYYY-MM-DD
-  const ddMm = rawDate.match(/^(\d{2})-(\d{2})$/);
-  if (ddMm) {
-    const [, d, m] = ddMm;
-    const y = new Date().getFullYear();
-    return {
-      date: `${y}-${m}-${d}`,
-      hasTime: false,
-    };
-  }
-
-  // Format: DD/MM/YYYY or DD/MM/YY
-  const slashDate = rawDate.match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
-  if (slashDate) {
-    const [, d, m, rawY] = slashDate;
-    const y = rawY.length === 2 ? `20${rawY}` : rawY;
-    return {
-      date: `${y}-${m}-${d}`,
-      hasTime: false,
-    };
-  }
-
-  return {
-    date: rawDate,
-    hasTime: false,
-  };
-}
-
-// ============================================================================
-// 3. MAIN PARSER ENTRYPOINT
-// ============================================================================
-export function parseBankSms(message: string, sender?: string): ParsedTransaction {
+export function parseBankSms(
+  message: string,
+  sender: string,
+  fallbackDate: string
+): ParsedTransaction {
   const cleanMsg = message.trim();
+  const cleanSender = sender.trim();
 
   // STEP 1: Sender-Keyed Template Matching
-  if (sender) {
-    const group = BANK_REGISTRY.find((g) => g.senderMatch.test(sender));
-    if (group) {
-      for (const t of group.templates) {
-        const match = cleanMsg.match(t.regex);
-        if (match && match.groups) {
-          const { amount: amtStr, last4, merchant: rawMerchant, date: rawDate } = match.groups;
-
-          const amount = amtStr ? Math.round(parseFloat(amtStr.replace(/,/g, "")) * 100) / 100 : null;
-          const merchant = rawMerchant
-            ? cleanMerchantName(rawMerchant)
-            : t.type === "CREDIT"
-              ? "Refund"
-              : null;
-          const category = inferCategory(merchant, cleanMsg);
-          const normDate = rawDate ? normalizeDate(rawDate.trim()) : null;
-          const transactionDate = normDate ? normDate.date : null;
-          const hasTime = normDate ? normDate.hasTime : false;
-
-          return {
-            amount,
-            type: t.type,
-            merchant,
-            last4: last4 || null,
-            method: t.method,
-            category,
-            transactionDate,
-            hasTime,
-            templateName: t.name,
-          };
-        }
-      }
-    }
-  }
-
-  // STEP 2: Fallback Generic Matcher (if sender didn't match or was unspecified)
-  for (const group of BANK_REGISTRY) {
+  const group = BANK_REGISTRY.find((g) => g.senderMatch.test(cleanSender));
+  if (group) {
     for (const t of group.templates) {
       const match = cleanMsg.match(t.regex);
       if (match && match.groups) {
         const { amount: amtStr, last4, merchant: rawMerchant, date: rawDate } = match.groups;
 
         const amount = amtStr ? Math.round(parseFloat(amtStr.replace(/,/g, "")) * 100) / 100 : null;
-        const merchant = rawMerchant
-          ? cleanMerchantName(rawMerchant)
-          : t.type === "CREDIT"
-            ? "Refund"
-            : null;
-        const category = inferCategory(merchant, cleanMsg);
-        const normDate = rawDate ? normalizeDate(rawDate.trim()) : null;
-        const transactionDate = normDate ? normDate.date : null;
-        const hasTime = normDate ? normDate.hasTime : false;
+        const { merchant, category } = resolveMerchant(rawMerchant || (t.type === "CREDIT" ? "Refund" : null));
+        const transactionDate = parseTransactionDate(rawDate, fallbackDate);
 
         return {
           amount,
@@ -473,7 +194,31 @@ export function parseBankSms(message: string, sender?: string): ParsedTransactio
           method: t.method,
           category,
           transactionDate,
-          hasTime,
+          templateName: t.name,
+        };
+      }
+    }
+  }
+
+  // STEP 2: Fallback Generic Matcher (if sender didn't match a specific bank group)
+  for (const group of BANK_REGISTRY) {
+    for (const t of group.templates) {
+      const match = cleanMsg.match(t.regex);
+      if (match && match.groups) {
+        const { amount: amtStr, last4, merchant: rawMerchant, date: rawDate } = match.groups;
+
+        const amount = amtStr ? Math.round(parseFloat(amtStr.replace(/,/g, "")) * 100) / 100 : null;
+        const { merchant, category } = resolveMerchant(rawMerchant || (t.type === "CREDIT" ? "Refund" : null));
+        const transactionDate = parseTransactionDate(rawDate, fallbackDate);
+
+        return {
+          amount,
+          type: t.type,
+          merchant,
+          last4: last4 || null,
+          method: t.method,
+          category,
+          transactionDate,
           templateName: `Fallback:${t.name}`,
         };
       }
@@ -488,8 +233,7 @@ export function parseBankSms(message: string, sender?: string): ParsedTransactio
     last4: null,
     method: null,
     category: "others",
-    transactionDate: null,
-    hasTime: false,
+    transactionDate: fallbackDate,
     templateName: undefined,
   };
 }

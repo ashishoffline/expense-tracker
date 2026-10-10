@@ -181,7 +181,8 @@ transactionsRoute.post("/reprocess", async (c) => {
         continue;
       }
 
-      const parsed = parseBankSms(row.raw_message, row.sender);
+      const fallbackDate = row.transaction_date;
+      const parsed = parseBankSms(row.raw_message, row.sender, fallbackDate);
 
       if (parsed.amount !== null) {
         let accountId: string | null = null;
@@ -191,10 +192,6 @@ transactionsRoute.post("/reprocess", async (c) => {
           ).bind(parsed.last4, parsed.last4).first<{ id: string }>();
           if (acc) accountId = acc.id;
         }
-
-        const txnDate = (parsed.transactionDate && parsed.hasTime)
-          ? parsed.transactionDate
-          : row.transaction_date;
 
         await c.env.DB.prepare(
           `UPDATE transactions SET
@@ -214,7 +211,7 @@ transactionsRoute.post("/reprocess", async (c) => {
           accountId,
           parsed.category,
           parsed.method,
-          txnDate,
+          parsed.transactionDate,
           row.id
         ).run();
 
