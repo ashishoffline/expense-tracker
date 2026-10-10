@@ -108,7 +108,6 @@ dashboardRoute.get("/", async (c) => {
       LEFT JOIN accounts a ON t.account_id = a.id
       WHERE t.transaction_date LIKE ? || '%'
       ORDER BY t.transaction_date DESC
-      LIMIT 100
     `).bind(monthPrefix).all<TransactionRow>();
 
     // Helper formatter for INR
@@ -138,8 +137,8 @@ dashboardRoute.get("/", async (c) => {
     const categoryRowsHtml = categories.length === 0
       ? `<p class="text-sm text-slate-400 py-4">No category spending recorded for this month.</p>`
       : categories.map((cat) => {
-          const pct = Math.min(100, Math.round((cat.total_amount / (kpi.total_debit || 1)) * 100));
-          return `
+        const pct = Math.min(100, Math.round((cat.total_amount / (kpi.total_debit || 1)) * 100));
+        return `
             <div class="py-2.5 border-b border-slate-800 last:border-0">
               <div class="flex items-center justify-between text-sm mb-1">
                 <span class="flex items-center gap-2 text-slate-200">
@@ -154,12 +153,12 @@ dashboardRoute.get("/", async (c) => {
               </div>
             </div>
           `;
-        }).join("");
+      }).join("");
 
     const merchantRowsHtml = merchants.length === 0
       ? `<p class="text-sm text-slate-400 py-4">No merchant transactions for this month.</p>`
       : merchants.map((m) => {
-          return `
+        return `
             <div class="flex items-center justify-between py-2 border-b border-slate-800 last:border-0 text-sm">
               <div class="flex items-center gap-2">
                 <span class="font-medium text-slate-200">${m.merchant}</span>
@@ -168,20 +167,20 @@ dashboardRoute.get("/", async (c) => {
               <span class="font-semibold text-slate-100">${formatINR(m.total_amount)}</span>
             </div>
           `;
-        }).join("");
+      }).join("");
 
     const transactionRowsHtml = transactions.length === 0
       ? `<tr><td colspan="6" class="text-center py-8 text-slate-400">No transactions recorded for ${MONTH_NAMES[parseInt(selectedMonth, 10) - 1]} ${selectedYear}.</td></tr>`
       : transactions.map((t) => {
-          const isDebit = t.type !== "CREDIT";
-          const amtClass = isDebit ? "text-slate-100" : "text-emerald-400";
-          const amtPrefix = isDebit ? "-" : "+";
-          const dateStr = t.transaction_date ? t.transaction_date.replace("T", " ").substring(0, 16) : "-";
-          const userBadge = t.source_user
-            ? `<span class="px-2 py-0.5 rounded text-xs bg-slate-800 text-slate-300 font-mono">${t.source_user}</span>`
-            : "";
+        const isDebit = t.type !== "CREDIT";
+        const amtClass = isDebit ? "text-slate-100" : "text-emerald-400";
+        const amtPrefix = isDebit ? "-" : "+";
+        const dateStr = t.transaction_date ? t.transaction_date.replace("T", " ").substring(0, 16) : "-";
+        const userBadge = t.source_user
+          ? `<span class="px-2 py-0.5 rounded text-xs bg-slate-800 text-slate-300 font-mono">${t.source_user}</span>`
+          : "";
 
-          return `
+        return `
             <tr class="border-b border-slate-800 hover:bg-slate-800/40 transition">
               <td class="py-3 px-4 text-xs text-slate-400 whitespace-nowrap font-mono">${dateStr}</td>
               <td class="py-3 px-4 text-sm font-medium text-slate-100">
@@ -203,7 +202,7 @@ dashboardRoute.get("/", async (c) => {
               </td>
             </tr>
           `;
-        }).join("");
+      }).join("");
 
     const html = `<!DOCTYPE html>
 <html lang="en" class="dark">

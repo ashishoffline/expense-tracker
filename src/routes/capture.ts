@@ -65,7 +65,12 @@ captureRoute.post("/", async (c) => {
   // 5. Parse Bank SMS via Sender-Keyed Template Registry
   const parsed = parseBankSms(message, sender.trim());
   const status = parsed.amount !== null ? "PARSED" : "UNPARSED";
-  const txnDate = parsed.transactionDate || normalizedReceivedAt;
+
+  // Use SMS datetime ONLY if it includes a complete time component;
+  // otherwise, take the full timestamp from the request payload (receivedAt).
+  const txnDate = (parsed.transactionDate && parsed.hasTime)
+    ? parsed.transactionDate
+    : normalizedReceivedAt;
 
   // 6. Database Operations with Failure Replay Logging
   try {

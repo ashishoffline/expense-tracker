@@ -6,6 +6,7 @@ export interface ParsedTransaction {
   method: "CARD" | "UPI" | "NETBANKING" | null;
   category: string;
   transactionDate: string | null;
+  hasTime: boolean;
   templateName?: string;
 }
 
@@ -317,34 +318,29 @@ function inferCategory(merchant: string | null, rawMessage: string): string {
   return "others";
 }
 
-function normalizeDate(rawDate: string): string {
+interface NormalizedDate {
+  date: string;
+  hasTime: boolean;
+}
+
+function normalizeDate(rawDate: string): NormalizedDate {
   // Format: YYYY-MM-DD:HH:MM:SS (HDFC card spend)
   const hdfcDateTime = rawDate.match(/^(\d{4}-\d{2}-\d{2}):(\d{2}:\d{2}:\d{2})$/);
   if (hdfcDateTime) {
-    return `${hdfcDateTime[1]}T${hdfcDateTime[2]}`;
+    return {
+      date: `${hdfcDateTime[1]}T${hdfcDateTime[2]}`,
+      hasTime: true,
+    };
   }
 
-  // Format: DD-MM (HDFC RuPay UPI) -> current year YYYY-MM-DD
-  const ddMm = rawDate.match(/^(\d{2})-(\d{2})$/);
-  if (ddMm) {
-    const [, d, m] = ddMm;
-    const y = new Date().getFullYear();
-    return `${y}-${m}-${d}`;
-  }
-
-  // Format: DD-MM-YY HH:MM:SS
+  // Format: DD-MM-YY HH:MM:SS (Axis card spend)
   const axisDate = rawDate.match(/^(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
   if (axisDate) {
     const [, d, m, y, hh, mm, ss] = axisDate;
-    return `20${y}-${m}-${d}T${hh}:${mm}:${ss}`;
-  }
-
-  // Format: DD/MM/YYYY or DD/MM/YY
-  const slashDate = rawDate.match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
-  if (slashDate) {
-    const [, d, m, rawY] = slashDate;
-    const y = rawY.length === 2 ? `20${rawY}` : rawY;
-    return `${y}-${m}-${d}`;
+    return {
+      date: `20${y}-${m}-${d}T${hh}:${mm}:${ss}`,
+      hasTime: true,
+    };
   }
 
   // Format: DD-Mon-YY or DD/Mon/YYYY [at HH:MM:SS] (04-Oct-26 or 05/OCT/2026 or 05-OCT-26 at 14:32:05)
@@ -359,13 +355,44 @@ function normalizeDate(rawDate: string): string {
     if (m) {
       const y = rawY.length === 2 ? `20${rawY}` : rawY;
       if (hh && mm && ss) {
-        return `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
+        return {
+          date: `${y}-${m}-${d}T${hh}:${mm}:${ss}`,
+          hasTime: true,
+        };
       }
-      return `${y}-${m}-${d}`;
+      return {
+        date: `${y}-${m}-${d}`,
+        hasTime: false,
+      };
     }
   }
 
-  return rawDate;
+  // Format: DD-MM (HDFC RuPay UPI) -> current year YYYY-MM-DD
+  const ddMm = rawDate.match(/^(\d{2})-(\d{2})$/);
+  if (ddMm) {
+    const [, d, m] = ddMm;
+    const y = new Date().getFullYear();
+    return {
+      date: `${y}-${m}-${d}`,
+      hasTime: false,
+    };
+  }
+
+  // Format: DD/MM/YYYY or DD/MM/YY
+  const slashDate = rawDate.match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
+  if (slashDate) {
+    const [, d, m, rawY] = slashDate;
+    const y = rawY.length === 2 ? `20${rawY}` : rawY;
+    return {
+      date: `${y}-${m}-${d}`,
+      hasTime: false,
+    };
+  }
+
+  return {
+    date: rawDate,
+    hasTime: false,
+  };
 }
 
 // ============================================================================
@@ -390,7 +417,9 @@ export function parseBankSms(message: string, sender?: string): ParsedTransactio
               ? "Refund"
               : null;
           const category = inferCategory(merchant, cleanMsg);
-          const transactionDate = rawDate ? normalizeDate(rawDate.trim()) : null;
+          const normDate = rawDate ? normalizeDate(rawDate.trim()) : null;
+          const transactionDate = normDate ? normDate.date : null;
+          const hasTime = normDate ? normDate.hasTime : false;
 
           return {
             amount,
@@ -400,6 +429,7 @@ export function parseBankSms(message: string, sender?: string): ParsedTransactio
             method: t.method,
             category,
             transactionDate,
+            hasTime,
             templateName: t.name,
           };
         }
@@ -421,7 +451,9 @@ export function parseBankSms(message: string, sender?: string): ParsedTransactio
             ? "Refund"
             : null;
         const category = inferCategory(merchant, cleanMsg);
-        const transactionDate = rawDate ? normalizeDate(rawDate.trim()) : null;
+        const normDate = rawDate ? normalizeDate(rawDate.trim()) : null;
+        const transactionDate = normDate ? normDate.date : null;
+        const hasTime = normDate ? normDate.hasTime : false;
 
         return {
           amount,
@@ -431,6 +463,7 @@ export function parseBankSms(message: string, sender?: string): ParsedTransactio
           method: t.method,
           category,
           transactionDate,
+          hasTime,
           templateName: `Fallback:${t.name}`,
         };
       }
@@ -446,6 +479,7 @@ export function parseBankSms(message: string, sender?: string): ParsedTransactio
     method: null,
     category: "others",
     transactionDate: null,
+    hasTime: false,
     templateName: undefined,
   };
 }

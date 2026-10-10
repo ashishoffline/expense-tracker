@@ -192,7 +192,9 @@ transactionsRoute.post("/reprocess", async (c) => {
           if (acc) accountId = acc.id;
         }
 
-        const txnDate = parsed.transactionDate || row.transaction_date;
+        const txnDate = (parsed.transactionDate && parsed.hasTime)
+          ? parsed.transactionDate
+          : row.transaction_date;
 
         await c.env.DB.prepare(
           `UPDATE transactions SET
