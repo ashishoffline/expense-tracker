@@ -9,7 +9,6 @@
     "migrate:remote": "wrangler d1 migrations apply expense-tracker-db --remote"
   },
   "dependencies": {
-    "@hono/swagger-ui": "^0.6.1",
     "hono": "^4.13.13"
   },
   "devDependencies": {

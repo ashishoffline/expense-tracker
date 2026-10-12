@@ -2,14 +2,14 @@ import { resolveMerchant } from "./merchants";
 import { parseTransactionDate } from "./dates";
 
 export interface ParsedTransaction {
-  amount: number | null;
+  amount: number;
   type: "DEBIT" | "CREDIT";
-  merchant: string | null;
+  merchant: string;
   last4: string | null;
-  method: "CARD" | "UPI" | "NETBANKING" | null;
+  method: "CARD" | "UPI" | "NETBANKING";
   category: string;
   transactionDate: string;
-  templateName?: string;
+  templateName: string;
 }
 
 interface TemplateDefinition {
@@ -170,7 +170,7 @@ export function parseBankSms(
   message: string,
   sender: string,
   fallbackDate: string
-): ParsedTransaction {
+): ParsedTransaction | null {
   const cleanMsg = message.trim();
   const cleanSender = sender.trim();
 
@@ -181,21 +181,22 @@ export function parseBankSms(
       const match = cleanMsg.match(t.regex);
       if (match && match.groups) {
         const { amount: amtStr, last4, merchant: rawMerchant, date: rawDate } = match.groups;
-
         const amount = amtStr ? Math.round(parseFloat(amtStr.replace(/,/g, "")) * 100) / 100 : null;
-        const { merchant, category } = resolveMerchant(rawMerchant || (t.type === "CREDIT" ? "Refund" : null));
-        const transactionDate = parseTransactionDate(rawDate, fallbackDate);
+        if (amount !== null && !isNaN(amount)) {
+          const { merchant, category } = resolveMerchant(rawMerchant || (t.type === "CREDIT" ? "Refund" : null));
+          const transactionDate = parseTransactionDate(rawDate, fallbackDate);
 
-        return {
-          amount,
-          type: t.type,
-          merchant,
-          last4: last4 || null,
-          method: t.method,
-          category,
-          transactionDate,
-          templateName: t.name,
-        };
+          return {
+            amount,
+            type: t.type,
+            merchant,
+            last4: last4 || null,
+            method: t.method,
+            category,
+            transactionDate,
+            templateName: t.name,
+          };
+        }
       }
     }
   }
@@ -206,34 +207,26 @@ export function parseBankSms(
       const match = cleanMsg.match(t.regex);
       if (match && match.groups) {
         const { amount: amtStr, last4, merchant: rawMerchant, date: rawDate } = match.groups;
-
         const amount = amtStr ? Math.round(parseFloat(amtStr.replace(/,/g, "")) * 100) / 100 : null;
-        const { merchant, category } = resolveMerchant(rawMerchant || (t.type === "CREDIT" ? "Refund" : null));
-        const transactionDate = parseTransactionDate(rawDate, fallbackDate);
+        if (amount !== null && !isNaN(amount)) {
+          const { merchant, category } = resolveMerchant(rawMerchant || (t.type === "CREDIT" ? "Refund" : null));
+          const transactionDate = parseTransactionDate(rawDate, fallbackDate);
 
-        return {
-          amount,
-          type: t.type,
-          merchant,
-          last4: last4 || null,
-          method: t.method,
-          category,
-          transactionDate,
-          templateName: `Fallback:${t.name}`,
-        };
+          return {
+            amount,
+            type: t.type,
+            merchant,
+            last4: last4 || null,
+            method: t.method,
+            category,
+            transactionDate,
+            templateName: `Fallback:${t.name}`,
+          };
+        }
       }
     }
   }
 
-  // STEP 3: Return Unparsed if no template matched
-  return {
-    amount: null,
-    type: "DEBIT",
-    merchant: null,
-    last4: null,
-    method: null,
-    category: "others",
-    transactionDate: fallbackDate,
-    templateName: undefined,
-  };
+  // STEP 3: Return null if no template matched
+  return null;
 }
