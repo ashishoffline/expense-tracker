@@ -4,8 +4,8 @@ import { toISTString } from "../parser/dates";
 import { generateDedupId } from "../utils/crypto";
 
 export interface CapturePayload {
-  sender?: string;
-  message?: string;
+  sender: string;
+  message: string;
   receivedAt?: string;
   source?: string;
 }
@@ -17,18 +17,16 @@ export interface ServiceResult {
 
 export interface ReprocessResult {
   success: boolean;
-  processed: number;
-  updated: number;
-  deleted: number;
+  requested: number;
+  migrated: number;
   stillUnparsed: number;
-  results: any[];
-}
-
-interface UnparsedRow {
-  id: string;
-  sender: string;
-  raw_message: string;
-  transaction_date: string;
+  notFound: number;
+  results: Array<{
+    id: string;
+    status: "PARSED" | "UNPARSED" | "NOT_FOUND";
+    details?: any;
+    error?: string;
+  }>;
 }
 
 /**
@@ -47,10 +45,10 @@ async function lookupAccountId(db: D1Database, last4: string | null): Promise<st
  * Ingests and processes an incoming SMS message.
  *
  * Pipeline:
- * 1. Discard check -> If matched, silently ignore with 200 (zero DB writes).
+ * 1. Discard check -> If matched (universal OTP), silently ignore with 200 (zero DB writes).
  * 2. Parse check -> Calls parseBankSms(message, sender, fallbackDate).
- *    - If parsed: inserts record with status='PARSED', all extracted fields, and created_at (IST).
- *    - If unparsed: inserts record with status='UNPARSED', raw message, and created_at (IST).
+ *    - If parsed: inserts into `transactions` (all financial fields guaranteed, zero NULLs).
+ *    - If unparsed: moves into `unparsed_transactions` (quarantine DLQ table for manual review).
  */
 export async function captureTransaction(
   db: D1Database,
@@ -58,18 +56,8 @@ export async function captureTransaction(
 ): Promise<ServiceResult> {
   const { sender, message, source, receivedAt } = payload;
 
-  if (!sender || typeof sender !== "string" || !sender.trim()) {
-    return { status: 400, data: { success: false, error: "Field 'sender' is required" } };
-  }
-  if (!message || typeof message !== "string" || !message.trim()) {
-    return { status: 400, data: { success: false, error: "Field 'message' is required" } };
-  }
-
-  const cleanSender = sender.trim();
-  const cleanMessage = message.trim();
-
-  // 1. Deterministic Ingestion Discard Gate (Silently ignored, zero log noise)
-  const discard = matchDiscardRule(cleanMessage);
+  // 1. High-Confidence Universal Discard Gate (OTPs)
+  const discard = matchDiscardRule(message);
   if (discard) {
     return {
       status: 200,
@@ -82,13 +70,13 @@ export async function captureTransaction(
   }
 
   // 2. Identity & Timestamps
-  const id = await generateDedupId(cleanSender, cleanMessage);
+  const id = await generateDedupId(sender, message);
   const nowIST = toISTString();
   const normalizedReceivedAt = toISTString(receivedAt);
-  const sourceUser = source?.trim() || "unknown";
+  const sourceUser = source || "unknown";
 
   // 3. Parse Bank SMS
-  const parsed = parseBankSms(cleanMessage, cleanSender, normalizedReceivedAt);
+  const parsed = parseBankSms(message, sender, normalizedReceivedAt);
 
   try {
     if (parsed) {
@@ -97,16 +85,16 @@ export async function captureTransaction(
       const insertResult = await db.prepare(
         `INSERT INTO transactions (
           id, source_user, sender, raw_message, transaction_date,
-          amount, type, merchant, account_id, category, method, status, created_at
+          amount, type, merchant, account_id, category, method, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PARSED', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING`
       )
         .bind(
           id,
           sourceUser,
-          cleanSender,
-          cleanMessage,
+          sender,
+          message,
           parsed.transactionDate,
           parsed.amount,
           parsed.type,
@@ -124,7 +112,6 @@ export async function captureTransaction(
           data: {
             action: "created",
             id,
-            status: "PARSED",
             parsed: {
               amount: parsed.amount,
               type: parsed.type,
@@ -139,20 +126,19 @@ export async function captureTransaction(
         return { status: 200, data: { action: "duplicate", id } };
       }
     } else {
-      // Unparsed fallback: store raw text and timestamp so no data is ever lost
+      // Unparsed fallback: quarantine into unparsed_transactions table (zero pollution in main ledger)
       const insertResult = await db.prepare(
-        `INSERT INTO transactions (
-          id, source_user, sender, raw_message, transaction_date,
-          amount, type, merchant, account_id, category, method, status, created_at
+        `INSERT INTO unparsed_transactions (
+          id, source_user, sender, raw_message, transaction_date, created_at
         )
-        VALUES (?, ?, ?, ?, ?, NULL, 'DEBIT', NULL, NULL, 'others', NULL, 'UNPARSED', ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING`
       )
         .bind(
           id,
           sourceUser,
-          cleanSender,
-          cleanMessage,
+          sender,
+          message,
           normalizedReceivedAt,
           nowIST
         )
@@ -162,10 +148,9 @@ export async function captureTransaction(
         return {
           status: 201,
           data: {
-            action: "created",
+            action: "quarantined",
             id,
-            status: "UNPARSED",
-            notice: "No bank template matched; saved raw message for review",
+            notice: "No bank template matched; moved to unparsed_transactions for review",
           },
         };
       } else {
@@ -178,7 +163,7 @@ export async function captureTransaction(
       JSON.stringify({
         id,
         error: error instanceof Error ? error.message : String(error),
-        payload: { sender: cleanSender, message: cleanMessage },
+        payload: { sender, message },
       })
     );
     return {
@@ -192,103 +177,119 @@ export async function captureTransaction(
 }
 
 /**
- * Reprocesses unparsed transactions in safe batches.
- *
- * Pipeline:
- * 1. Checks discard rule -> If matched, DELETES the row from DB (deterministic auto-cleanup).
- * 2. Runs parseBankSms -> If matched, UPDATES status to 'PARSED' with all extracted fields.
- * 3. If still unparsed -> leaves as 'UNPARSED'.
+ * Reprocesses specific unparsed transactions by ID (1 to 5 IDs).
+ * When newly matched by updated regex rules, atomically inserts into transactions
+ * and deletes from unparsed_transactions.
  */
 export async function reprocessTransactions(
   db: D1Database,
-  limit: number = 25
+  ids: string[]
 ): Promise<ReprocessResult> {
-  const safeLimit = Math.max(1, Math.min(limit, 100));
+  const placeholders = ids.map(() => "?").join(",");
+  const { results: rows } = await db
+    .prepare(
+      `SELECT id, source_user, sender, raw_message, transaction_date, created_at 
+       FROM unparsed_transactions 
+       WHERE id IN (${placeholders})`
+    )
+    .bind(...ids)
+    .all<{
+      id: string;
+      source_user: string | null;
+      sender: string;
+      raw_message: string;
+      transaction_date: string;
+      created_at: string;
+    }>();
 
-  const { results: rows } = await db.prepare(
-    `SELECT id, sender, raw_message, transaction_date 
-     FROM transactions 
-     WHERE status = 'UNPARSED' 
-     ORDER BY created_at ASC 
-     LIMIT ?`
-  ).bind(safeLimit).all<UnparsedRow>();
-
-  const results: any[] = [];
-  let updatedCount = 0;
-  let deletedCount = 0;
+  const foundMap = new Map(rows.map((r) => [r.id, r]));
+  const results: ReprocessResult["results"] = [];
+  let migratedCount = 0;
   let stillUnparsedCount = 0;
+  let notFoundCount = 0;
 
-  for (const row of rows) {
-    // 1. Auto-cleanup discardable rows
-    const discard = matchDiscardRule(row.raw_message);
-    if (discard) {
-      await db.prepare(`DELETE FROM transactions WHERE id = ?`).bind(row.id).run();
-      deletedCount++;
+  for (const id of ids) {
+    const row = foundMap.get(id);
+    if (!row) {
+      notFoundCount++;
       results.push({
-        id: row.id,
-        status: "DELETED",
-        reason: discard.reason,
-        rule: discard.rule,
-        notice: "Matched discard rule and deleted from database",
+        id,
+        status: "NOT_FOUND",
+        error: "Message ID not found in unparsed_transactions",
       });
       continue;
     }
 
-    // 2. Parse SMS
     const parsed = parseBankSms(row.raw_message, row.sender, row.transaction_date);
     if (parsed) {
       const accountId = await lookupAccountId(db, parsed.last4);
+      const nowIST = toISTString();
 
-      await db.prepare(
-        `UPDATE transactions SET
-          amount = ?,
-          type = ?,
-          merchant = ?,
-          account_id = ?,
-          category = ?,
-          method = ?,
-          status = 'PARSED',
-          transaction_date = ?
-        WHERE id = ?`
-      ).bind(
-        parsed.amount,
-        parsed.type,
-        parsed.merchant,
-        accountId,
-        parsed.category,
-        parsed.method,
-        parsed.transactionDate,
-        row.id
-      ).run();
+      // Atomically insert into transactions and delete from unparsed_transactions
+      await db.batch([
+        db.prepare(
+          `INSERT INTO transactions (
+            id, source_user, sender, raw_message, transaction_date,
+            amount, type, merchant, account_id, category, method, created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            amount = excluded.amount,
+            type = excluded.type,
+            merchant = excluded.merchant,
+            account_id = excluded.account_id,
+            category = excluded.category,
+            method = excluded.method,
+            transaction_date = excluded.transaction_date`
+        ).bind(
+          row.id,
+          row.source_user || "unknown",
+          row.sender,
+          row.raw_message,
+          parsed.transactionDate,
+          parsed.amount,
+          parsed.type,
+          parsed.merchant,
+          accountId,
+          parsed.category,
+          parsed.method,
+          row.created_at || nowIST
+        ),
+        db.prepare(`DELETE FROM unparsed_transactions WHERE id = ?`).bind(row.id),
+      ]);
 
-      updatedCount++;
+      migratedCount++;
       results.push({
         id: row.id,
         status: "PARSED",
-        amount: parsed.amount,
-        type: parsed.type,
-        merchant: parsed.merchant,
-        category: parsed.category,
-        account_id: accountId,
-        template: parsed.templateName,
+        details: {
+          amount: parsed.amount,
+          type: parsed.type,
+          merchant: parsed.merchant,
+          category: parsed.category,
+          account_id: accountId,
+          transaction_date: parsed.transactionDate,
+        },
       });
     } else {
       stillUnparsedCount++;
       results.push({
         id: row.id,
         status: "UNPARSED",
-        sender: row.sender,
-        notice: "No matching template found yet",
+        details: {
+          sender: row.sender,
+          notice: "No matching bank template found yet; remains in unparsed_transactions",
+        },
       });
     }
   }
 
   return {
     success: true,
-    processed: rows.length,
-    updated: updatedCount,
-    deleted: deletedCount,
+    requested: ids.length,
+    migrated: migratedCount,
     stillUnparsed: stillUnparsedCount,
+    notFound: notFoundCount,
     results,
   };
 }

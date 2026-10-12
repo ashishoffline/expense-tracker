@@ -41,17 +41,14 @@ function isAuthorized(c: Context<{ Bindings: Env }>): boolean {
   return false;
 }
 
-// 1. Dashboard UI (Protected)
-const dashboardHandler = async (c: Context<{ Bindings: Env }>) => {
+// 1. Dashboard UI (GET / - Protected)
+app.get("/", async (c) => {
   if (!isAuthorized(c)) {
     return c.html(renderAccessDeniedHtml(), 401);
   }
 
   return renderDashboardHtml(c);
-};
-
-app.get("/", dashboardHandler);
-app.get("/dashboard", dashboardHandler);
+});
 
 // 2. Ingestion Webhook (POST /capture for iOS Shortcuts - Protected)
 app.post("/capture", async (c) => {
@@ -66,18 +63,56 @@ app.post("/capture", async (c) => {
     return c.json({ success: false, error: "Invalid JSON payload" }, 400);
   }
 
-  const result = await captureTransaction(c.env.DB, body);
+  if (!body?.sender || typeof body.sender !== "string" || !body.sender.trim()) {
+    return c.json({ success: false, error: "Field 'sender' is required" }, 400);
+  }
+  if (!body?.message || typeof body.message !== "string" || !body.message.trim()) {
+    return c.json({ success: false, error: "Field 'message' is required" }, 400);
+  }
+
+  const result = await captureTransaction(c.env.DB, {
+    sender: body.sender.trim(),
+    message: body.message.trim(),
+    source: typeof body.source === "string" ? body.source.trim() : undefined,
+    receivedAt: typeof body.receivedAt === "string" ? body.receivedAt.trim() : undefined,
+  });
   return c.json(result.data, result.status);
 });
 
-// 3. Maintenance Reprocess (POST /transactions/reprocess - Protected)
-app.post("/transactions/reprocess", async (c) => {
+// 3. Maintenance Reprocess (POST /reprocess - Protected)
+app.post("/reprocess", async (c) => {
   if (!isAuthorized(c)) {
     return c.json({ success: false, error: "Unauthorized" }, 401);
   }
 
-  const limit = Math.min(Number(c.req.query("limit")) || 25, 100);
-  const result = await reprocessTransactions(c.env.DB, limit);
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ success: false, error: "Invalid JSON body. Expected { ids: string[] }" }, 400);
+  }
+
+  if (!body?.ids || !Array.isArray(body.ids)) {
+    return c.json({
+      success: false,
+      error: "Field 'ids' must be an array of message IDs",
+    }, 400);
+  }
+
+  const stringIds = body.ids
+    .filter((id: unknown): id is string => typeof id === "string")
+    .map((id: string) => id.trim())
+    .filter((id: string) => id.length > 0);
+  const cleanIds = Array.from(new Set<string>(stringIds));
+
+  if (cleanIds.length === 0 || cleanIds.length > 5) {
+    return c.json({
+      success: false,
+      error: "Must provide between 1 and 5 unique message IDs to reprocess",
+    }, 400);
+  }
+
+  const result = await reprocessTransactions(c.env.DB, cleanIds);
   return c.json(result);
 });
 
