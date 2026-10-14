@@ -41,6 +41,12 @@ const BANK_REGISTRY: BankTemplateGroup[] = [
         method: "CARD",
         regex: /^Rs\.(?<amount>[\d,.]+)\s+spent\s+via\s+Kotak\s+Debit\s+Card\s+[xX*]+(?<last4>\d{4})\s+at\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}\/\d{2}\/\d{4})/i,
       },
+      {
+        name: "Kotak Account Refund",
+        type: "CREDIT",
+        method: "CARD",
+        regex: /^Dear\s+Customer,\s*refund\s+of\s+Rs\.?\s*(?<amount>[\d,.]+)\s+is\s+credited\s+to\s+your\s+Kotak\s+Bank\s+A\/[cC]\s+no\.?\s*[xX*]+(?<last4>\d{4})/i,
+      },
     ],
   },
 
@@ -159,6 +165,20 @@ const BANK_REGISTRY: BankTemplateGroup[] = [
         type: "DEBIT",
         method: "CARD",
         regex: /^HSBC\s+Credit\s+Card\s+[xX*]+(?<last4>\d{4})\s+used\s+at\s+(?<merchant>.+?)\s+for\s+INR\s+(?<amount>[\d,.]+)\s+on\s+(?<date>\d{2}\/\d{2}\/\d{2})/i,
+      },
+    ],
+  },
+
+  // IDFC FIRST BANK
+  {
+    bank: "IDFC",
+    senderMatch: /IDFC/i,
+    templates: [
+      {
+        name: "IDFC Bank Account Spend",
+        type: "DEBIT",
+        method: "CARD",
+        regex: /^Spent\s+Rs\.?\s*(?<amount>[\d,.]+)\s+from\s+A\/[cC]\s+[xX*]+(?<last4>\d{4})\s+at\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}\/\d{2}\/\d{2,4})/i,
       },
     ],
   },

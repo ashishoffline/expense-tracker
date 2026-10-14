@@ -26,6 +26,8 @@ export const MERCHANT_RULES: MerchantRule[] = [
   { pattern: /burger\s*king/i, merchant: "Burger King", category: "dining" },
   { pattern: /haldiram/i, merchant: "Haldiram", category: "dining" },
   { pattern: /crush\s*corner/i, merchant: "Crush Corner", category: "dining" },
+  { pattern: /samosa\s*party/i, merchant: "Samosa Party", category: "dining" },
+  { pattern: /hottey\s*smokey/i, merchant: "Hottey Smokey", category: "dining" },
   { pattern: /dhaba/i, merchant: "Dhaba Square", category: "dining" },
   { pattern: /paytmqr63wqx9|chai\s*bhagaan/i, merchant: "Chai Bhagaan Cafe", category: "dining" },
   { pattern: /q855608779/i, merchant: "Momo Corner", category: "dining" },
@@ -42,23 +44,29 @@ export const MERCHANT_RULES: MerchantRule[] = [
   { pattern: /dmart/i, merchant: "DMart", category: "groceries" },
   { pattern: /natures\s*basket/i, merchant: "Nature's Basket", category: "groceries" },
   { pattern: /country\s*delight/i, merchant: "Country Delight", category: "groceries" },
+  { pattern: /carry\s*mart/i, merchant: "Carry Mart", category: "groceries" },
 
-  // 3. Shopping & E-Commerce
+  // 3. Clothing & Fashion
+  { pattern: /lifestyle\s*internation|max\s*fashion|lifestyle/i, merchant: "Lifestyle / Max", category: "clothing" },
+  { pattern: /myntra/i, merchant: "Myntra", category: "clothing" },
+  { pattern: /ajio/i, merchant: "Ajio", category: "clothing" },
+  { pattern: /firstcry/i, merchant: "FirstCry", category: "clothing" },
+  { pattern: /zara/i, merchant: "Zara", category: "clothing" },
+  { pattern: /h&m/i, merchant: "H&M", category: "clothing" },
+  { pattern: /uniqlo/i, merchant: "Uniqlo", category: "clothing" },
+  { pattern: /westside/i, merchant: "Westside", category: "clothing" },
+  { pattern: /snitch/i, merchant: "Snitch", category: "clothing" },
+
+  // 4. Shopping & General E-Commerce
   { pattern: /flipkart|fkrt/i, merchant: "Flipkart", category: "shopping" },
   { pattern: /amazon|amzn/i, merchant: "Amazon", category: "shopping" },
-  { pattern: /myntra/i, merchant: "Myntra", category: "shopping" },
-  { pattern: /firstcry/i, merchant: "FirstCry", category: "shopping" },
-  { pattern: /ajio/i, merchant: "Ajio", category: "shopping" },
-  { pattern: /zara/i, merchant: "Zara", category: "shopping" },
-  { pattern: /h&m/i, merchant: "H&M", category: "shopping" },
   { pattern: /croma/i, merchant: "Croma", category: "shopping" },
   { pattern: /reliance/i, merchant: "Reliance", category: "shopping" },
   { pattern: /tata\s*cliq/i, merchant: "Tata CLiQ", category: "shopping" },
-  { pattern: /nykaa/i, merchant: "Nykaa", category: "shopping" },
   { pattern: /decathlon/i, merchant: "Decathlon", category: "shopping" },
-  { pattern: /uniqlo/i, merchant: "Uniqlo", category: "shopping" },
 
-  // 4. Personal Care & Services
+  // 5. Personal Care & Beauty
+  { pattern: /nykaa/i, merchant: "Nykaa", category: "personal_care" },
   { pattern: /urban\s*clap|urbanclap|urban\s*company|urbancompany/i, merchant: "Urban Company", category: "personal_care" },
   { pattern: /s1u0sbf|lakundinni/i, merchant: "Lakundinni Sumangala", category: "personal_care" },
   { pattern: /enrich|salon|spa|haircut/i, merchant: "Salon & Spa", category: "personal_care" },

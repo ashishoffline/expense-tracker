@@ -1,0 +1,36 @@
+### Configuration Variables
+# Change @baseUrl to your live Cloudflare Worker URL when testing in production
+@baseUrl = http://localhost:8787
+# @baseUrl = https://expense-tracker.<your-subdomain>.workers.dev
+
+# Replace with the value of INGESTION_TOKEN from your .dev.vars / Cloudflare Secrets
+@token = your_ingestion_token_here
+
+
+### 1. Health Check (Public)
+GET {{baseUrl}}/health
+
+
+### 2. Capture Transaction (Ingest SMS)
+POST {{baseUrl}}/capture
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "sender": "IDFCFB-S",
+  "message": "Spent Rs.555.16 from A/C XX4870 at Zomato Online Order on 13/10/26. Not you? Call 180010888/SMS BLOCK (last 4 digit of card) to 5676732. IDFC FIRST Bank"
+}
+
+
+### 3. Reprocess Unparsed Transactions (1 to 5 IDs)
+POST {{baseUrl}}/reprocess
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "ids": [
+    "paste_id_1_here",
+    "paste_id_2_here"
+  ]
+}
+
