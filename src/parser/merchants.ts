@@ -71,7 +71,8 @@ export const MERCHANT_RULES: MerchantRule[] = [
   { pattern: /s1u0sbf|lakundinni/i, merchant: "Lakundinni Sumangala", category: "personal_care" },
   { pattern: /enrich|salon|spa|haircut/i, merchant: "Salon & Spa", category: "personal_care" },
 
-  // 5. Bills & Utilities
+  // 6. Bills & Utilities
+  { pattern: /\blic\b|licnew/i, merchant: "LIC", category: "utilities" },
   { pattern: /nobrokerhood|nobroker\s*hood/i, merchant: "NoBrokerHood", category: "utilities" },
   { pattern: /tata\s*payments|tata\s*pay/i, merchant: "Tata Pay", category: "utilities" },
   { pattern: /bescom/i, merchant: "BESCOM", category: "utilities" },
@@ -82,7 +83,7 @@ export const MERCHANT_RULES: MerchantRule[] = [
   { pattern: /tatapower|tata\s*power/i, merchant: "Tata Power", category: "utilities" },
   { pattern: /billdesk/i, merchant: "BillDesk", category: "utilities" },
 
-  // 6. Travel & Transit
+  // 7. Travel & Transit
   { pattern: /uber/i, merchant: "Uber", category: "travel" },
   { pattern: /ola|\bani\s*tech\b/i, merchant: "Ola", category: "travel" },
   { pattern: /rapido/i, merchant: "Rapido", category: "travel" },

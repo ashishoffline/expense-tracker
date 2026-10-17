@@ -90,6 +90,13 @@ const BANK_REGISTRY: BankTemplateGroup[] = [
         method: "CARD",
         regex: /^Alert!\s+Rs\.?\s*(?<amount>[\d,.]+)\s+refunded\s+by\s+(?<merchant>.+?)\s+on\s+(?<date>\d{2}\/[A-Za-z]{3}\/\d{4})\s+&\s+adjusted\s+against\s+HDFC\s+Bank\s+Credit\s+Card\s+(?<last4>\d{4})/i,
       },
+      // Template F: HDFC SmartPay Bill Paid
+      {
+        name: "HDFC SmartPay Bill Paid",
+        type: "DEBIT",
+        method: "CARD",
+        regex: /^Bill\s+Paid:\s*(?<merchant>.+?)(?:\s+Bill(?:\s+[\w\d]+)?)?\s+of\s+Rs\.?\s*(?<amount>[\d,.]+)\s+paid\s+on\s+(?<date>\d{2}-[A-Za-z]{3}-\d{2,4})\s+from\s+HDFC\s+Bank\s+Credit\s+Card\s+[xX*]+(?<last4>\d{4})/i,
+      },
     ],
   },
 
