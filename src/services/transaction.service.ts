@@ -295,7 +295,7 @@ export async function reprocessTransactions(
 }
 
 // ============================================================================
-// QUERY METHODS
+// QUERY & UPDATE METHODS
 // ============================================================================
 
 export interface TransactionSummary {
@@ -327,8 +327,19 @@ export interface TransactionDetail {
   accountName: string | null;
 }
 
+export interface CategoryItem {
+  id: string;
+  name: string;
+  icon: string | null;
+}
+
+export interface UpdateTransactionPayload {
+  category?: string;
+  exclude?: boolean;
+}
+
 /**
- * Calculates high-level KPI summary for a given month (YYYY-MM).
+ * Calculates high-level KPI summary for a given month (YYYY-MM), excluding marked transactions.
  */
 export async function getTransactionSummary(
   db: D1Database,
@@ -341,7 +352,7 @@ export async function getTransactionSummary(
         COALESCE(ROUND(SUM(CASE WHEN type = 'DEBIT' THEN amount ELSE 0 END), 2), 0) as total_debit,
         COALESCE(ROUND(SUM(CASE WHEN type = 'CREDIT' THEN amount ELSE 0 END), 2), 0) as total_credit
       FROM transactions 
-      WHERE transaction_date LIKE ? || '%'`
+      WHERE transaction_date LIKE ? || '%' AND exclude = 0`
     )
     .bind(monthPrefix)
     .first<{ total_count: number; total_debit: number; total_credit: number }>();
@@ -354,7 +365,7 @@ export async function getTransactionSummary(
 }
 
 /**
- * Returns expenses grouped by category, merchant, or card for a given month (YYYY-MM).
+ * Returns expenses grouped by category, merchant, or card for a given month (YYYY-MM), excluding marked transactions.
  */
 export async function getTransactionsGroupedBy(
   db: D1Database,
@@ -372,7 +383,7 @@ export async function getTransactionsGroupedBy(
           COALESCE(ROUND(SUM(t.amount), 2), 0) as total_amount
         FROM transactions t
         LEFT JOIN categories c ON t.category = c.id
-        WHERE t.transaction_date LIKE ? || '%' AND t.type = 'DEBIT'
+        WHERE t.transaction_date LIKE ? || '%' AND t.type = 'DEBIT' AND t.exclude = 0
         GROUP BY t.category
         ORDER BY total_amount DESC`
       )
@@ -403,7 +414,7 @@ export async function getTransactionsGroupedBy(
           COUNT(*) as count,
           COALESCE(ROUND(SUM(t.amount), 2), 0) as total_amount
         FROM transactions t
-        WHERE t.transaction_date LIKE ? || '%' AND t.type = 'DEBIT'
+        WHERE t.transaction_date LIKE ? || '%' AND t.type = 'DEBIT' AND t.exclude = 0
         GROUP BY grouping_key
         ORDER BY total_amount DESC
         LIMIT 10`
@@ -434,7 +445,7 @@ export async function getTransactionsGroupedBy(
           COALESCE(ROUND(SUM(t.amount), 2), 0) as total_amount
         FROM transactions t
         LEFT JOIN accounts a ON t.account_id = a.id
-        WHERE t.transaction_date LIKE ? || '%' AND t.type = 'DEBIT'
+        WHERE t.transaction_date LIKE ? || '%' AND t.type = 'DEBIT' AND t.exclude = 0
         GROUP BY grouping_key
         ORDER BY total_amount DESC`
       )
@@ -458,7 +469,7 @@ export async function getTransactionsGroupedBy(
 }
 
 /**
- * Returns all individual transactions for a given month (YYYY-MM).
+ * Returns all individual non-excluded transactions for a given month (YYYY-MM).
  */
 export async function getTransactions(
   db: D1Database,
@@ -482,7 +493,7 @@ export async function getTransactions(
       FROM transactions t
       LEFT JOIN categories c ON t.category = c.id
       LEFT JOIN accounts a ON t.account_id = a.id
-      WHERE t.transaction_date LIKE ? || '%'
+      WHERE t.transaction_date LIKE ? || '%' AND t.exclude = 0
       ORDER BY t.transaction_date DESC`
     )
     .bind(monthPrefix)
@@ -515,5 +526,52 @@ export async function getTransactions(
     categoryIcon: r.category_icon,
     accountName: r.account_name,
   }));
+}
+
+/**
+ * Returns all available categories for dropdowns and selection.
+ */
+export async function getAllCategories(db: D1Database): Promise<CategoryItem[]> {
+  const { results } = await db
+    .prepare(`SELECT id, name, icon FROM categories ORDER BY name ASC`)
+    .all<CategoryItem>();
+  return results;
+}
+
+/**
+ * Updates a transaction's category or exclude status.
+ */
+export async function updateTransaction(
+  db: D1Database,
+  id: string,
+  payload: UpdateTransactionPayload
+): Promise<{ success: boolean; error?: string }> {
+  const fields: string[] = [];
+  const values: any[] = [];
+
+  if (payload.category !== undefined && typeof payload.category === "string" && payload.category.trim()) {
+    fields.push("category = ?");
+    values.push(payload.category.trim());
+  }
+  if (payload.exclude !== undefined && typeof payload.exclude === "boolean") {
+    fields.push("exclude = ?");
+    values.push(payload.exclude ? 1 : 0);
+  }
+
+  if (fields.length === 0) {
+    return { success: false, error: "No valid fields provided to update ('category' or 'exclude')" };
+  }
+
+  values.push(id);
+  const result = await db
+    .prepare(`UPDATE transactions SET ${fields.join(", ")} WHERE id = ?`)
+    .bind(...values)
+    .run();
+
+  if (result.meta.changes === 0) {
+    return { success: false, error: "Transaction not found" };
+  }
+
+  return { success: true };
 }
 

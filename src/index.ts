@@ -1,7 +1,11 @@
 import { Hono, type Context } from "hono";
 import type { Env } from "./types";
 import { renderDashboardHtml, renderAccessDeniedHtml } from "./routes/dashboard";
-import { captureTransaction, reprocessTransactions } from "./services/transaction.service";
+import {
+  captureTransaction,
+  reprocessTransactions,
+  updateTransaction,
+} from "./services/transaction.service";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -116,7 +120,29 @@ app.post("/reprocess", async (c) => {
   return c.json(result);
 });
 
-// 4. Health Check (Public)
+// 4. Update Transaction (PATCH /transactions/:id - Protected)
+app.patch("/transactions/:id", async (c) => {
+  if (!isAuthorized(c)) {
+    return c.json({ success: false, error: "Unauthorized" }, 401);
+  }
+
+  const id = c.req.param("id");
+  if (!id) {
+    return c.json({ success: false, error: "Missing transaction id" }, 400);
+  }
+
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ success: false, error: "Invalid JSON body" }, 400);
+  }
+
+  const result = await updateTransaction(c.env.DB, id, body);
+  return c.json(result, result.success ? 200 : 400);
+});
+
+// 5. Health Check (Public)
 app.get("/health", async (c) => {
   try {
     const result = await c.env.DB.prepare("SELECT 1 as connected").first<{ connected: number }>();

@@ -1,7 +1,7 @@
 ### Configuration Variables
 # Change @baseUrl to your live Cloudflare Worker URL when testing in production
-@baseUrl = http://localhost:8787
-# @baseUrl = https://expense-tracker.<your-subdomain>.workers.dev
+# @baseUrl = http://localhost:8787
+@baseUrl = https://expense-tracker.ashishjha.dev
 
 # Replace with the value of INGESTION_TOKEN from your .dev.vars / Cloudflare Secrets
 @token = your_ingestion_token_here
@@ -29,8 +29,42 @@ Authorization: Bearer {{token}}
 
 {
   "ids": [
-    "paste_id_1_here",
-    "paste_id_2_here"
+    "2f2702224a68e09bb6094258993c7e03c44d567c0ccdb1d127f81b5470e730e2",
+    "85cc82b58204606f5419680e3bcdaf6e2b90b6c43fb0862b4dec7ad6802f2c4d"
   ]
 }
+
+
+### 4. Update Transaction Category
+# Useful if an expense lands in 'other' and you want to categorize it (e.g. 'travel', 'food', 'bills', 'clothing', etc.)
+PATCH {{baseUrl}}/transactions/REPLACE_WITH_TRANSACTION_ID
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "category": "travel"
+}
+
+
+### 5. Exclude Transaction (e.g., Friends/Family Card Usage)
+# Sets exclude = 1 so it is hidden from the dashboard feed and omitted from all expense metrics
+PATCH {{baseUrl}}/transactions/REPLACE_WITH_TRANSACTION_ID
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "exclude": true
+}
+
+
+### 6. Un-exclude / Restore Transaction
+# Sets exclude = 0 to restore it back to regular calculations and feed
+PATCH {{baseUrl}}/transactions/REPLACE_WITH_TRANSACTION_ID
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "exclude": false
+}
+
 

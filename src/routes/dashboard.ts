@@ -4,6 +4,7 @@ import {
   getTransactionSummary,
   getTransactionsGroupedBy,
   getTransactions,
+  getAllCategories,
 } from "../services/transaction.service";
 
 const MONTH_NAMES = [
@@ -19,12 +20,13 @@ export async function renderDashboardHtml(c: Context<{ Bindings: Env }>): Promis
   const apiKey = c.req.query("apiKey") || "";
 
   try {
-    // Fetch KPI stats, category breakdown, top merchants, and transaction feed in parallel
-    const [kpi, categories, merchants, transactions] = await Promise.all([
+    // Fetch KPI stats, category breakdown, top merchants, transaction feed, and categories in parallel
+    const [kpi, categories, merchants, transactions, allCategories] = await Promise.all([
       getTransactionSummary(c.env.DB, monthPrefix),
       getTransactionsGroupedBy(c.env.DB, monthPrefix, "category"),
       getTransactionsGroupedBy(c.env.DB, monthPrefix, "merchant"),
       getTransactions(c.env.DB, monthPrefix),
+      getAllCategories(c.env.DB),
     ]);
 
     // Helper formatter for INR
@@ -103,10 +105,18 @@ export async function renderDashboardHtml(c: Context<{ Bindings: Env }>): Promis
                 <div class="text-xs text-slate-500">${t.sender}</div>
               </td>
               <td class="py-3 px-4 text-xs whitespace-nowrap">
-                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-800 text-slate-200">
-                  <span>${t.categoryIcon}</span>
-                  <span>${t.categoryName}</span>
-                </span>
+                <select
+                  data-prev="${t.category}"
+                  onchange="updateCategory('${t.id}', this)"
+                  class="bg-slate-800/90 hover:bg-slate-700/80 text-slate-200 text-xs rounded-full px-2.5 py-1 border border-slate-700/80 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer transition appearance-none pr-6 font-medium"
+                  style="background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%2210%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%2394a3b8%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E'); background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 0.65rem;"
+                >
+                  ${allCategories.map(cat => `
+                    <option value="${cat.id}" ${cat.id === t.category ? "selected" : ""}>
+                      ${cat.icon || "📦"} ${cat.name}
+                    </option>
+                  `).join("")}
+                </select>
               </td>
               <td class="py-3 px-4 text-xs text-slate-400 whitespace-nowrap">
                 ${t.accountName || '<span class="text-slate-600">-</span>'}
@@ -246,6 +256,38 @@ export async function renderDashboardHtml(c: Context<{ Bindings: Env }>): Promis
         const text = r.innerText.toLowerCase();
         r.style.display = text.includes(q) ? '' : 'none';
       });
+    }
+
+    async function updateCategory(id, selectEl) {
+      const originalValue = selectEl.getAttribute('data-prev') || selectEl.value;
+      const newCategory = selectEl.value;
+      if (newCategory === originalValue) return;
+
+      selectEl.disabled = true;
+      selectEl.style.opacity = '0.5';
+      try {
+        const res = await fetch('/transactions/' + id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: newCategory })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || ('HTTP ' + res.status));
+        }
+        selectEl.setAttribute('data-prev', newCategory);
+        // Refresh page briefly or show visual confirmation
+        selectEl.classList.add('ring-2', 'ring-emerald-500');
+        setTimeout(() => {
+          selectEl.classList.remove('ring-2', 'ring-emerald-500');
+        }, 1200);
+      } catch (err) {
+        alert('Failed to update category: ' + (err.message || err));
+        selectEl.value = originalValue;
+      } finally {
+        selectEl.disabled = false;
+        selectEl.style.opacity = '1';
+      }
     }
   </script>
 </body>
